@@ -1,0 +1,30 @@
+# Dockerfile
+FROM proxy.ai-lab.ir/python:3.13-slim
+
+WORKDIR /app
+
+RUN rm /etc/apt/sources.list.d/debian.sources \
+    && echo "deb [trusted=yes] https://proxy.ai-lab.ir/repository/debian-bookworm-proxy/ bookworm main" > /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends gcc \
+    && rm -rf /var/lib/apt/lists/* 
+
+
+COPY requirements.txt .
+
+
+RUN pip config --user set global.index https://proxy.ai-lab.ir/repository/pypi-proxy/simple \
+    && pip config --user set global.index-url https://proxy.ai-lab.ir/repository/pypi-proxy/simple \
+    && pip config --user set global.trusted-host proxy.ai-lab.ir/repository/pypi-proxy \
+    && pip install --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+
+COPY . .
+
+ENV PYTHONPATH=/app
+
+# your app listens on 8001
+EXPOSE 8001
+
+CMD ["uvicorn", "apps.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
