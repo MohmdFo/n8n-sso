@@ -314,114 +314,122 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
         n8n_workflows_url = f"{n8n_base_url}/home/workflows"
         
         if auth_cookie:
-            # For local development, the cookie method won't work due to domain mismatch
-            # In production, this should work when deployed on same domain as n8n
-            
-            # Check if we're in local development mode
-            import os
-            is_local = os.getenv("DEBUG", "false").lower() == "true"
-            
-            if is_local:
-                logger.info("Local development mode - using form fallback", extra={
-                    "request_id": request_id,
-                    "email": profile.email,
-                    "reason": "domain_mismatch_localhost"
-                })
-                # Don't use the cookie method in local dev - fall through to form method
-                auth_cookie = None
-            else:
-                # Production mode - use cookie method
-                logger.info("Production mode - using cookie method", extra={
-                    "request_id": request_id,
-                    "email": profile.email,
-                    "redirect_url": n8n_workflows_url,
-                    "cookie_length": len(auth_cookie)
-                })
-                
-                from urllib.parse import urlparse
-                parsed_url = urlparse(n8n_base_url)
-                cookie_domain = parsed_url.hostname
-                is_secure = parsed_url.scheme == "https"
-                
-                response = RedirectResponse(url=n8n_workflows_url, status_code=302)
-                
-                # Set the n8n-auth cookie
-                response.set_cookie(
-                    key="n8n-auth",
-                    value=auth_cookie,
-                    domain=cookie_domain,
-                    path="/",
-                    httponly=True,
-                    secure=is_secure,
-                    samesite="lax",
-                    max_age=7 * 24 * 3600  # 7 days
-                )
-                
-                logger.info("Cookie set, redirecting to n8n", extra={
-                    "request_id": request_id,
-                    "email": profile.email,
-                    "cookie_domain": cookie_domain
-                })
-                
-                return response
-        
-        # Method 2: Fallback to form submission (works for local development)
-        if auth_cookie is None:
-            n8n_login_url = f"{n8n_base_url}/rest/login"
-            
-            logger.info("Falling back to form submission method", extra={
+            # Try the cookie method first (should work in production)
+            logger.info("Cookie extracted - attempting direct redirect with cookie", extra={
                 "request_id": request_id,
                 "email": profile.email,
-                "n8n_login_url": n8n_login_url
+                "redirect_url": n8n_workflows_url,
+                "cookie_length": len(auth_cookie)
             })
             
-            # Create an HTML auto-submit form that will log the user into n8n
-            handoff_html = f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <title>Logging you into n8n...</title>
-                <meta charset="utf-8">
-                <script>
-                    // Try to handle the response and redirect
-                    function handleLoginResponse() {{
-                        // After successful login, redirect to workflows
-                        setTimeout(function() {{
+            from urllib.parse import urlparse
+            parsed_url = urlparse(n8n_base_url)
+            cookie_domain = parsed_url.hostname
+            is_secure = parsed_url.scheme == "https"
+            
+            response = RedirectResponse(url=n8n_workflows_url, status_code=302)
+            
+            # Set the n8n-auth cookie
+            response.set_cookie(
+                key="n8n-auth",
+                value=auth_cookie,
+                domain=cookie_domain,
+                path="/",
+                httponly=True,
+                secure=is_secure,
+                samesite="lax",
+                max_age=7 * 24 * 3600  # 7 days
+            )
+            
+            logger.info("Cookie set, redirecting to workflows", extra={
+                "request_id": request_id,
+                "email": profile.email,
+                "cookie_domain": cookie_domain,
+                "redirect_url": n8n_workflows_url
+            })
+            
+            return response
+        
+        # Method 2: Fallback using JavaScript login with proper redirect
+        logger.info("Using JavaScript login method with redirect", extra={
+            "request_id": request_id,
+            "email": profile.email,
+            "target_url": n8n_workflows_url
+        })
+        
+        # Use JavaScript to login and then redirect properly
+        handoff_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Logging you into n8n...</title>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        </head>
+        <body>
+            <div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
+                <h2>🔐 Completing your login...</h2>
+                <p>You will be redirected to n8n workflows in a moment.</p>
+                <div style="margin: 20px;">
+                    <div style="border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+                </div>
+            </div>
+            
+            <script>
+                // Function to perform login and redirect
+                async function performLogin() {{
+                    try {{
+                        // Perform the login request
+                        const loginResponse = await fetch('{n8n_base_url}/rest/login', {{
+                            method: 'POST',
+                            headers: {{
+                                'Content-Type': 'application/json',
+                                'Accept': 'application/json'
+                            }},
+                            body: JSON.stringify({{
+                                emailOrLdapLoginId: '{profile.email}',
+                                password: '{temp_password}'
+                            }})
+                        }});
+                        
+                        if (loginResponse.ok) {{
+                            console.log('Login successful, redirecting to workflows...');
+                            // Wait a moment for cookies to be set, then redirect
+                            setTimeout(() => {{
+                                window.location.href = '{n8n_workflows_url}';
+                            }}, 500);
+                        }} else {{
+                            console.error('Login failed:', loginResponse.status);
+                            // Still try to redirect as a fallback
+                            setTimeout(() => {{
+                                window.location.href = '{n8n_workflows_url}';
+                            }}, 1000);
+                        }}
+                    }} catch (error) {{
+                        console.error('Login request failed:', error);
+                        // Fallback redirect
+                        setTimeout(() => {{
                             window.location.href = '{n8n_workflows_url}';
                         }}, 1000);
                     }}
-                </script>
-            </head>
-            <body onload="handleLoginResponse()">
-                <div style="text-align: center; padding: 50px; font-family: Arial, sans-serif;">
-                    <h2>🔐 Completing your login...</h2>
-                    <p>You will be redirected to n8n in a moment.</p>
-                    <div style="margin: 20px;">
-                        <div style="border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
-                    </div>
-                </div>
+                }}
                 
-                <form id="loginForm" method="POST" action="{n8n_login_url}" style="display: none;">
-                    <input type="hidden" name="emailOrLdapLoginId" value="{profile.email}">
-                    <input type="hidden" name="password" value="{temp_password}">
-                </form>
-                
-                <script>
-                    document.getElementById('loginForm').submit();
-                </script>
-                
-                <style>
-                    @keyframes spin {{
-                        0% {{ transform: rotate(0deg); }}
-                        100% {{ transform: rotate(360deg); }}
-                    }}
-                </style>
-            </body>
-            </html>
-            """
+                // Start the login process immediately
+                performLogin();
+            </script>
             
-            from fastapi.responses import HTMLResponse
-            return HTMLResponse(content=handoff_html, status_code=200)
+            <style>
+                @keyframes spin {{
+                    0% {{ transform: rotate(0deg); }}
+                    100% {{ transform: rotate(360deg); }}
+                }}
+            </style>
+        </body>
+        </html>
+        """
+        
+        from fastapi.responses import HTMLResponse
+        return HTMLResponse(content=handoff_html, status_code=200)
         
     except Exception as exc:
         logger.exception("Failed to provision/login to n8n", extra={
