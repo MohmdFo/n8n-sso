@@ -6,6 +6,7 @@ from fastapi_pagination import add_pagination
 from fastapi_versioning import VersionedFastAPI
 
 from apps.auth.routers import router as casdoor_auth_router
+from apps.auth.cookie_bridge import router as cookie_bridge_router
 from apps.core.routers.health import router as health_router
 from apps.metrics import metrics_router, setup_metrics
 from apps.metrics.middleware import PrometheusMetricsMiddleware, MetricsContextMiddleware
@@ -28,6 +29,7 @@ app.add_middleware(MetricsContextMiddleware)
 app.include_router(health_router, tags=["Health"])
 app.include_router(metrics_router, tags=["Monitoring"])
 app.include_router(casdoor_auth_router)
+app.include_router(cookie_bridge_router)
 
 # Add any middleware, exception handlers, etc. here
 add_pagination(app)
