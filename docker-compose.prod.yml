@@ -4,20 +4,21 @@ services:
   web:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.Deploy
     container_name: n8n-sso-gateway
-    # load your local .env (make sure it defines CASDOOR_* etc.)
     env_file:
       - .env
-    # map port 8512 on your host to 8512 in the container
     ports:
       - "8512:8512"
-    # for development, mount your code and enable --reload
-    volumes:
-      - .:/app:cached
     command: >
       uvicorn apps.main:app
       --host 0.0.0.0
       --port 8512
-      --reload
+      --workers 4
     restart: unless-stopped
+    networks:
+      - n8n-sso-network
+
+networks:
+  n8n-sso-network:
+    driver: bridge
