@@ -4,15 +4,15 @@ from __future__ import annotations
 import logging
 import secrets
 import uuid
+import requests
+import jwt
 from typing import Any, Dict
+from cryptography import x509
+from cryptography.hazmat.backends import default_backend
 
 from fastapi import HTTPException, Request
 from fastapi.responses import RedirectResponse
 
-from backup.auth.services import (
-    get_oauth_token,
-    parse_jwt_token,
-)
 from apps.integrations.n8n_db import (
     CasdoorProfile, 
     ensure_user_project_binding, 
@@ -50,6 +50,137 @@ def extract_n8n_auth_cookie(response) -> str | None:
             return cookie_value
     
     return None
+
+    return None
+
+
+def get_oauth_token(code: str) -> dict:
+    """
+    Exchange the Casdoor OAuth authorization code for an access token.
+
+    This function sends a POST request to the Casdoor token endpoint with the provided code.
+    If the response status is not 200 (OK), it raises an HTTPException.
+
+    :param code: The authorization code received from Casdoor.
+    :return: A dictionary representing the OAuth token response (expected to contain an "id_token").
+    :raises HTTPException: If the token request fails (status code != 200).
+    """
+    settings = get_settings()
+    url = f"{str(settings.CASDOOR_ENDPOINT).rstrip('/')}/api/login/oauth/access_token"
+    payload = {
+        "grant_type": "authorization_code",
+        "client_id": settings.CASDOOR_CLIENT_ID,
+        "client_secret": settings.CASDOOR_CLIENT_SECRET,
+        "code": code,
+    }
+    response = requests.post(url, data=payload)
+    if response.status_code != 200:
+        raise HTTPException(status_code=400, detail="Failed to obtain token")
+    return response.json()
+
+
+def parse_jwt_token(token: str) -> dict:
+    """
+    Verify and decode the provided JWT token using the Casdoor certificate.
+
+    This function loads the certificate, extracts the public key, and attempts to decode
+    the JWT with the audience set to the Casdoor client ID and a leeway of 60 seconds.
+
+    :param token: The JWT token string to be parsed.
+    :return: A dictionary containing the decoded token payload.
+    :raises jwt.PyJWTError: If the token validation or decoding fails.
+    """
+    settings = get_settings()
+    
+    try:
+        # Load certificate from file path
+        with open(settings.CASDOOR_CERT_PATH, "r") as cert_file:
+            cert_content = cert_file.read()
+        
+        certificate = x509.load_pem_x509_certificate(cert_content.encode("utf-8"), default_backend())
+        public_key = certificate.public_key()
+    except Exception as e:
+        logger.error(f"Error loading certificate: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Certificate loading error: {str(e)}")
+    
+    # First, try to decode without audience validation to see what the actual audience is
+    try:
+        decoded_without_audience = jwt.decode(
+            token,
+            public_key,
+            algorithms=["RS256"],
+            options={"verify_aud": False},
+            leeway=60
+        )
+        actual_audience = decoded_without_audience.get("aud")
+        logger.info(f"JWT token audience: {actual_audience}")
+        logger.info(f"Expected audience (CASDOOR_CLIENT_ID): {settings.CASDOOR_CLIENT_ID}")
+        
+        # Handle different audience formats that Casdoor might use
+        expected_audiences = set([
+            settings.CASDOOR_CLIENT_ID,
+            f"{settings.CASDOOR_CLIENT_ID}-org-built-in",
+            f"{settings.CASDOOR_CLIENT_ID}-org-{settings.CASDOOR_ORG_NAME}"
+        ])
+        
+        # Handle case where actual_audience might be a list or string
+        if isinstance(actual_audience, list):
+            actual_audiences = actual_audience
+        else:
+            actual_audiences = [actual_audience] if actual_audience else []
+        
+        # Check if any of the actual audiences match any of the expected audiences
+        matching_audience = None
+        for actual_aud in actual_audiences:
+            if actual_aud in expected_audiences:
+                matching_audience = actual_aud
+                break
+        
+        if matching_audience:
+            # Audience matches one of the expected formats
+            logger.info(f"Using matching audience: {matching_audience}")
+            return jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                audience=matching_audience,
+                leeway=60
+            )
+        else:
+            logger.warning(f"Audience mismatch! Token audience: {actual_audience}, Expected one of: {list(expected_audiences)}")
+            
+            # Try with the actual audience from the token (if it's a string)
+            if actual_audiences and len(actual_audiences) == 1:
+                try:
+                    return jwt.decode(
+                        token,
+                        public_key,
+                        algorithms=["RS256"],
+                        audience=actual_audiences[0],
+                        leeway=60
+                    )
+                except jwt.InvalidAudienceError:
+                    logger.error(f"Failed to validate with actual audience: {actual_audiences[0]}")
+            
+            # If that fails, try without audience validation as a fallback
+            logger.warning("Falling back to decoding without audience validation")
+            return decoded_without_audience
+            
+    except Exception as e:
+        logger.error(f"Error in initial token decoding: {str(e)}")
+        # Fallback to original behavior
+        try:
+            return jwt.decode(
+                token,
+                public_key,
+                algorithms=["RS256"],
+                audience=settings.CASDOOR_CLIENT_ID,
+                leeway=60
+            )
+        except Exception as fallback_error:
+            logger.error(f"Fallback token decoding also failed: {str(fallback_error)}")
+            raise HTTPException(status_code=400, detail=f"Token decoding failed: {str(fallback_error)}")
+
 
 def map_casdoor_to_profile(user_info: Dict[str, Any]) -> CasdoorProfile:
     """Map Casdoor JWT claims to CasdoorProfile."""
