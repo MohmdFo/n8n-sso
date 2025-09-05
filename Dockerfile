@@ -19,4 +19,4 @@ ENV PYTHONPATH=/app
 # your app listens on 8512
 EXPOSE 8512
 
-CMD ["uvicorn", "apps.main:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
+CMD ["uvicorn", "apps.main:app", "--host", "0.0.0.0", "--port", "8512", "--reload"]
