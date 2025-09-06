@@ -215,3 +215,28 @@ async def rotate_user_password(user_id: UUID, new_password: str) -> None:
             "password_length": len(new_password),
             "hash_prefix": hashed_password[:10]
         })
+
+
+async def get_user_by_email(email: str) -> N8nUserRow | None:
+    """
+    Find user by email in n8n database.
+    
+    Returns:
+        N8nUserRow if found, None otherwise
+    """
+    async with get_connection() as conn:
+        user_result = await conn.execute(
+            text('SELECT id, email FROM "user" WHERE email = :email'),
+            {"email": email}
+        )
+        user_row = user_result.fetchone()
+        
+        if user_row:
+            logger.info("Found user by email", extra={
+                "email": email, 
+                "user_id": str(user_row.id)
+            })
+            return N8nUserRow(id=user_row.id, email=user_row.email)
+        
+        logger.info("User not found by email", extra={"email": email})
+        return None

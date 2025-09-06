@@ -55,6 +55,37 @@ class N8NClient:
         })
         return resp
 
+    def logout_user(self, auth_cookie: str = None) -> httpx.Response:
+        """Logout user from n8n by calling the logout endpoint."""
+        headers = self._headers()
+        
+        # If we have an auth cookie, include it in the request
+        if auth_cookie:
+            headers["Cookie"] = f"n8n-auth={auth_cookie}"
+        
+        try:
+            resp = self._client.request(
+                "POST", 
+                "/rest/logout", 
+                headers=headers
+            )
+            
+            logger.info("n8n logout attempt", extra={
+                "status": resp.status_code,
+                "has_auth_cookie": auth_cookie is not None,
+                "response_text": resp.text[:200] if resp.text else "no response",
+                "response_headers": dict(resp.headers)
+            })
+            
+            return resp
+            
+        except Exception as exc:
+            logger.error("n8n logout failed", extra={
+                "error": str(exc),
+                "has_auth_cookie": auth_cookie is not None
+            })
+            raise N8NClientError(500, f"Logout request failed: {exc}")
+
     def close(self):
         try:
             self._client.close()
