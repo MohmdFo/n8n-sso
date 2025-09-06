@@ -226,7 +226,7 @@ async def get_user_by_email(email: str) -> N8nUserRow | None:
     """
     async with get_connection() as conn:
         user_result = await conn.execute(
-            text('SELECT id, email FROM "user" WHERE email = :email'),
+            text('SELECT id, email, password FROM "user" WHERE email = :email'),
             {"email": email}
         )
         user_row = user_result.fetchone()
@@ -236,7 +236,53 @@ async def get_user_by_email(email: str) -> N8nUserRow | None:
                 "email": email, 
                 "user_id": str(user_row.id)
             })
-            return N8nUserRow(id=user_row.id, email=user_row.email)
+            # Create a user row object with the password field
+            class UserWithPassword(N8nUserRow):
+                def __init__(self, id, email, password=None):
+                    super().__init__(id, email)
+                    self.password = password
+                    
+            return UserWithPassword(id=user_row.id, email=user_row.email, password=user_row.password)
         
         logger.info("User not found by email", extra={"email": email})
         return None
+
+
+async def invalidate_user_sessions_db(user_email: str) -> bool:
+    """
+    Invalidate all active sessions for a user by rotating their password.
+    This forces all existing JWT tokens to become invalid.
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        async with get_connection() as conn:
+            # Generate a new random password to invalidate all existing sessions
+            new_password = generate_random_password()
+            new_password_hash = hash_password(new_password)
+            
+            # Update the user's password in the database
+            result = await conn.execute(
+                text('UPDATE "user" SET password = :password WHERE email = :email'),
+                {"password": new_password_hash, "email": user_email}
+            )
+            
+            if result.rowcount > 0:
+                logger.info("User sessions invalidated via password rotation", extra={
+                    "user_email": user_email,
+                    "rows_updated": result.rowcount
+                })
+                return True
+            else:
+                logger.warning("No user found to invalidate sessions", extra={
+                    "user_email": user_email
+                })
+                return False
+                
+    except Exception as exc:
+        logger.error("Failed to invalidate user sessions in database", extra={
+            "user_email": user_email,
+            "error": str(exc)
+        })
+        return False

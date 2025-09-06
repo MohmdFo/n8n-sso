@@ -26,7 +26,7 @@ In your Casdoor admin panel:
 ```
 Name: n8n-logout-sync
 Organization: organization_sharif
-Address: http://107.189.19.66:8512/auth/casdoor/webhook
+Address: http://107.189.19.66:8512/v1/auth/casdoor/webhook
 Method: POST
 Content Type: application/json
 Events: logout

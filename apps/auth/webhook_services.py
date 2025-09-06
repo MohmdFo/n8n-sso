@@ -122,23 +122,50 @@ async def handle_casdoor_logout_webhook(payload: Dict[str, Any]) -> Dict[str, An
         n8n_client = N8NClient(base_url=str(settings.N8N_BASE_URL))
         
         try:
-            # For webhook-triggered logout, we'll use the email-based logout approach
+            # Method 1: Try API-based logout (login as user, then logout)
             logout_response = n8n_client.logout_user_by_email(user_email)
             
-            logger.info("n8n logout API called via webhook", extra={
-                "request_id": request_id,
-                "email": user_email,
-                "status_code": logout_response.status_code,
-                "logout_successful": logout_response.status_code < 400,
-                "response_text": logout_response.text[:200] if logout_response.text else "no response"
-            })
-            
-            return {
-                "status": "success",
-                "user_email": user_email,
-                "n8n_logout_status": logout_response.status_code,
-                "message": "Logout API called - user should be logged out from n8n"
-            }
+            if logout_response.status_code < 400:
+                logger.info("n8n logout API successful via webhook", extra={
+                    "request_id": request_id,
+                    "email": user_email,
+                    "status_code": logout_response.status_code,
+                    "approach": "api_login_logout"
+                })
+                
+                return {
+                    "status": "success",
+                    "user_email": user_email,
+                    "n8n_logout_status": logout_response.status_code,
+                    "method": "api_logout",
+                    "message": "User logged out from n8n via API"
+                }
+            else:
+                # Method 2: Fallback to database approach (password rotation)
+                logger.warning("API logout failed, trying database approach", extra={
+                    "request_id": request_id,
+                    "email": user_email,
+                    "api_status": logout_response.status_code
+                })
+                
+                from apps.integrations.n8n_db import invalidate_user_sessions_db
+                db_success = await invalidate_user_sessions_db(user_email)
+                
+                if db_success:
+                    return {
+                        "status": "success",
+                        "user_email": user_email,
+                        "method": "database_invalidation",
+                        "message": "User sessions invalidated via database (password rotation)"
+                    }
+                else:
+                    return {
+                        "status": "partial_failure",
+                        "user_email": user_email,
+                        "api_status": logout_response.status_code,
+                        "db_status": "failed",
+                        "message": "Both API and database logout methods failed"
+                    }
             
         except Exception as logout_exc:
             logger.error("Failed to logout user from n8n", extra={

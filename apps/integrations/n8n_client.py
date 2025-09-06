@@ -89,24 +89,85 @@ class N8NClient:
     def logout_user_by_email(self, user_email: str) -> httpx.Response:
         """
         Logout a user by email. Since n8n doesn't have a direct API for this,
-        we'll try to find and invalidate their active sessions.
+        we'll login as the user first to get a valid session, then logout.
         """
         try:
-            # For now, we'll use the general logout endpoint
-            # In a production system, you might need to:
-            # 1. Query the database to find active sessions for this user
-            # 2. Call logout with their specific auth token
-            # 3. Or implement a custom endpoint in n8n
+            # Import here to avoid circular imports
+            from apps.integrations.n8n_db import get_user_by_email
+            from conf.settings import get_settings
+            import asyncio
             
-            resp = self.logout_user()  # General logout
+            # Get user info from database
+            async def get_user_password():
+                user_row = await get_user_by_email(user_email)
+                if not user_row:
+                    raise N8NClientError(404, f"User not found: {user_email}")
+                return user_row.password
             
-            logger.info("User logout by email attempted", extra={
-                "user_email": user_email,
-                "status": resp.status_code,
-                "approach": "general_logout"
+            # Get the user's password from the database
+            try:
+                user_password = asyncio.run(get_user_password())
+            except Exception as db_exc:
+                logger.error("Failed to get user password from database", extra={
+                    "user_email": user_email,
+                    "error": str(db_exc)
+                })
+                # Fallback to general logout without specific user authentication
+                return self.logout_user()
+            
+            # Step 1: Login as the user to get a valid session token
+            logger.info("Attempting to login user for logout", extra={
+                "user_email": user_email
             })
             
-            return resp
+            try:
+                login_resp = self.login_user(user_email, user_password)
+                
+                # Extract the auth cookie from login response
+                auth_cookie = None
+                if hasattr(login_resp, 'cookies') and login_resp.cookies:
+                    auth_cookie = login_resp.cookies.get('n8n-auth')
+                
+                if not auth_cookie and hasattr(login_resp, 'headers'):
+                    # Try to extract from set-cookie headers
+                    set_cookie_headers = login_resp.headers.get_list('set-cookie') or []
+                    for cookie in set_cookie_headers:
+                        if 'n8n-auth=' in cookie:
+                            auth_cookie = cookie.split('n8n-auth=')[1].split(';')[0]
+                            break
+                
+                logger.info("Login for logout completed", extra={
+                    "user_email": user_email,
+                    "login_status": login_resp.status_code,
+                    "has_auth_cookie": auth_cookie is not None
+                })
+                
+                # Step 2: Now logout using the obtained auth cookie
+                if auth_cookie:
+                    logout_resp = self.logout_user(auth_cookie)
+                    logger.info("User logout with auth cookie completed", extra={
+                        "user_email": user_email,
+                        "logout_status": logout_resp.status_code,
+                        "approach": "login_then_logout"
+                    })
+                    return logout_resp
+                else:
+                    # Fallback: try logout without cookie
+                    logout_resp = self.logout_user()
+                    logger.warning("User logout without auth cookie", extra={
+                        "user_email": user_email,
+                        "logout_status": logout_resp.status_code,
+                        "approach": "fallback_logout"
+                    })
+                    return logout_resp
+                    
+            except Exception as login_exc:
+                logger.error("Login for logout failed", extra={
+                    "user_email": user_email,
+                    "error": str(login_exc)
+                })
+                # Fallback to general logout
+                return self.logout_user()
             
         except Exception as exc:
             logger.error("Logout by email failed", extra={
