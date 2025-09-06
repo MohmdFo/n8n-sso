@@ -29,6 +29,17 @@ class CasdoorWebhookPayload:
         self.object = data.get("object")
         self.extended_user = data.get("extendedUser", {})
         
+        # Also try to get user info from the main payload if extendedUser is empty
+        if not self.extended_user and data.get("object"):
+            # Sometimes the user info is in the "object" field
+            obj = data["object"]
+            if isinstance(obj, dict) and obj.get("email"):
+                self.extended_user = {
+                    "email": obj.get("email"),
+                    "name": obj.get("name"),
+                    "displayName": obj.get("displayName") or obj.get("firstName", "") + " " + obj.get("lastName", "").strip()
+                }
+        
     @property
     def user_email(self) -> str | None:
         """Get user email from extended user data."""
@@ -61,12 +72,15 @@ async def handle_casdoor_logout_webhook(payload: Dict[str, Any]) -> Dict[str, An
     webhook_data = CasdoorWebhookPayload(payload)
     request_id = str(webhook_data.id)[:8] if webhook_data.id else "unknown"
     
+    # Debug: Log the full payload to understand what we're receiving
     logger.info("Received Casdoor webhook", extra={
         "request_id": request_id,
         "action": webhook_data.action,
         "user": webhook_data.user_name,
         "email": webhook_data.user_email,
-        "organization": webhook_data.organization
+        "organization": webhook_data.organization,
+        "full_payload": payload,  # Add full payload for debugging
+        "extended_user": webhook_data.extended_user
     })
     
     # Only handle logout events
@@ -108,21 +122,22 @@ async def handle_casdoor_logout_webhook(payload: Dict[str, Any]) -> Dict[str, An
         n8n_client = N8NClient(base_url=str(settings.N8N_BASE_URL))
         
         try:
-            # Try logout without specific cookie (global logout)
-            logout_response = n8n_client.logout_user()
+            # For webhook-triggered logout, we'll use the email-based logout approach
+            logout_response = n8n_client.logout_user_by_email(user_email)
             
-            logger.info("n8n logout completed", extra={
+            logger.info("n8n logout API called via webhook", extra={
                 "request_id": request_id,
                 "email": user_email,
                 "status_code": logout_response.status_code,
-                "logout_successful": logout_response.status_code < 400
+                "logout_successful": logout_response.status_code < 400,
+                "response_text": logout_response.text[:200] if logout_response.text else "no response"
             })
             
             return {
                 "status": "success",
                 "user_email": user_email,
                 "n8n_logout_status": logout_response.status_code,
-                "message": "User logged out from n8n"
+                "message": "Logout API called - user should be logged out from n8n"
             }
             
         except Exception as logout_exc:

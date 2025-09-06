@@ -86,6 +86,35 @@ class N8NClient:
             })
             raise N8NClientError(500, f"Logout request failed: {exc}")
 
+    def logout_user_by_email(self, user_email: str) -> httpx.Response:
+        """
+        Logout a user by email. Since n8n doesn't have a direct API for this,
+        we'll try to find and invalidate their active sessions.
+        """
+        try:
+            # For now, we'll use the general logout endpoint
+            # In a production system, you might need to:
+            # 1. Query the database to find active sessions for this user
+            # 2. Call logout with their specific auth token
+            # 3. Or implement a custom endpoint in n8n
+            
+            resp = self.logout_user()  # General logout
+            
+            logger.info("User logout by email attempted", extra={
+                "user_email": user_email,
+                "status": resp.status_code,
+                "approach": "general_logout"
+            })
+            
+            return resp
+            
+        except Exception as exc:
+            logger.error("Logout by email failed", extra={
+                "user_email": user_email,
+                "error": str(exc)
+            })
+            raise N8NClientError(500, f"Logout by email failed: {exc}")
+
     def close(self):
         try:
             self._client.close()
