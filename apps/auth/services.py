@@ -59,12 +59,14 @@ def get_oauth_token(code: str) -> dict:
     Exchange the Casdoor OAuth authorization code for an access token.
 
     This function sends a POST request to the Casdoor token endpoint with the provided code.
-    If the response status is not 200 (OK), it raises an HTTPException.
+    If the response status is not 200 (OK), it raises an HTTPException after 3 retry attempts.
 
     :param code: The authorization code received from Casdoor.
     :return: A dictionary representing the OAuth token response (expected to contain an "id_token").
-    :raises HTTPException: If the token request fails (status code != 200).
+    :raises HTTPException: If the token request fails after all retries (status code != 200).
     """
+    import time
+    
     settings = get_settings()
     url = f"{str(settings.CASDOOR_ENDPOINT).rstrip('/')}/api/login/oauth/access_token"
     payload = {
@@ -73,10 +75,95 @@ def get_oauth_token(code: str) -> dict:
         "client_secret": settings.CASDOOR_CLIENT_SECRET,
         "code": code,
     }
-    response = requests.post(url, data=payload)
-    if response.status_code != 200:
-        raise HTTPException(status_code=400, detail="Failed to obtain token")
-    return response.json()
+    
+    max_retries = 3
+    base_delay = 1  # seconds
+    
+    logger.info("Requesting OAuth token from Casdoor", extra={
+        "url": url,
+        "client_id": settings.CASDOOR_CLIENT_ID,
+        "code_length": len(code) if code else 0,
+        "code_preview": code[:10] + "..." if code and len(code) > 10 else code
+    })
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, data=payload, timeout=10)
+            
+            logger.info("OAuth token request attempt", extra={
+                "attempt": attempt + 1,
+                "status_code": response.status_code,
+                "response_size": len(response.content) if response.content else 0,
+                "response_headers": dict(response.headers)
+            })
+            
+            if response.status_code == 200:
+                try:
+                    token_data = response.json()
+                    
+                    # Log success with token info (but mask sensitive data)
+                    logger.info("OAuth token obtained successfully", extra={
+                        "attempt": attempt + 1,
+                        "has_access_token": "access_token" in token_data,
+                        "has_id_token": "id_token" in token_data,
+                        "token_type": token_data.get("token_type"),
+                        "expires_in": token_data.get("expires_in"),
+                        "id_token_length": len(token_data.get("id_token", "")) if token_data.get("id_token") else 0
+                    })
+                    
+                    return token_data
+                    
+                except ValueError as json_error:
+                    logger.error("Failed to parse JSON response", extra={
+                        "attempt": attempt + 1,
+                        "status_code": response.status_code,
+                        "response_text": response.text[:500],  # First 500 chars
+                        "json_error": str(json_error)
+                    })
+                    
+                    if attempt == max_retries - 1:
+                        raise HTTPException(
+                            status_code=502, 
+                            detail=f"Invalid JSON response from Casdoor: {str(json_error)}"
+                        )
+            else:
+                # Log non-200 response
+                logger.warning("OAuth token request failed", extra={
+                    "attempt": attempt + 1,
+                    "status_code": response.status_code,
+                    "response_text": response.text[:500],  # First 500 chars
+                    "response_headers": dict(response.headers)
+                })
+                
+                if attempt == max_retries - 1:
+                    # Final attempt failed
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Failed to obtain token after {max_retries} attempts. Last status: {response.status_code}, Response: {response.text[:200]}"
+                    )
+        
+        except requests.RequestException as req_error:
+            logger.error("OAuth token request network error", extra={
+                "attempt": attempt + 1,
+                "error": str(req_error),
+                "url": url
+            })
+            
+            if attempt == max_retries - 1:
+                raise HTTPException(
+                    status_code=502, 
+                    detail=f"Network error requesting token after {max_retries} attempts: {str(req_error)}"
+                )
+        
+        # Wait before retrying (exponential backoff)
+        if attempt < max_retries - 1:
+            delay = base_delay * (2 ** attempt)  # 1s, 2s, 4s
+            logger.info("Retrying OAuth token request", extra={
+                "attempt": attempt + 1,
+                "next_attempt_in": delay,
+                "max_retries": max_retries
+            })
+            time.sleep(delay)
 
 
 def parse_jwt_token(token: str) -> dict:
