@@ -1,10 +1,14 @@
 import sys
 import json
 import socket
+import os
+import logging
+from datetime import datetime
+from pathlib import Path
 from loguru import logger
 
 hostname = socket.gethostname()
-app_name = "gateway"
+app_name = "n8n-sso-gateway"
 
 def syslog_json_sink(message):
     record = message.record  # Loguru's record dictionary
@@ -30,24 +34,3 @@ def syslog_json_sink(message):
     # Get file and line details if available.
     file_path = record["file"].path if record.get("file") else "-"
     line = record.get("line", "-")
-    function = record.get("function", "-")
-
-    log_record = {
-        "pri": pri,
-        "version": 1,
-        "timestamp": record["time"].strftime("%Y-%m-%dT%H:%M:%S.%fZ"),
-        "hostname": hostname,
-        "app_name": app_name,
-        "procid": procid,
-        "msgid": msgid,
-        "level": record["level"].name,
-        "message": record["message"],
-    }
-    sys.stdout.write(json.dumps(log_record) + "\n")
-
-def configure_syslog_stdout(log_level="INFO"):
-    """
-    Configures Loguru to output JSON syslog-formatted logs to stdout via a custom sink.
-    """
-    logger.remove()
-    logger.add(syslog_json_sink, level=log_level, colorize=False)

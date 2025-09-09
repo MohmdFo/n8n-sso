@@ -1,11 +1,12 @@
-"""Minimal n8n REST client for session management."""
+"""n8n API client for authentication and user management."""
 from __future__ import annotations
 
+import httpx
 import logging
 from typing import Dict, Any
-import httpx
+from conf.enhanced_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 10.0
 

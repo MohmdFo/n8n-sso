@@ -12,8 +12,9 @@ from sqlalchemy import text
 from contextlib import asynccontextmanager
 
 from conf.settings import get_settings
+from conf.enhanced_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 PROJECT_ID_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 PROJECT_ID_LEN = 16

@@ -1,6 +1,7 @@
 # apps/main.py
 
 import logging
+import os
 from fastapi import FastAPI
 from fastapi_pagination import add_pagination
 from fastapi_versioning import VersionedFastAPI
@@ -10,10 +11,15 @@ from apps.auth.cookie_bridge import router as cookie_bridge_router
 from apps.core.routers.health import router as health_router
 from apps.metrics import metrics_router, setup_metrics
 from apps.metrics.middleware import PrometheusMetricsMiddleware, MetricsContextMiddleware
+from conf.enhanced_logging import configure_enhanced_logging, get_logger
 
-# Initialize logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+# Initialize enhanced logging
+log_level = os.getenv("LOG_LEVEL", "INFO")
+enable_file_logging = os.getenv("ENABLE_FILE_LOGGING", "true").lower() in ("true", "1", "yes")
+configure_enhanced_logging(log_level=log_level, enable_file_logging=enable_file_logging)
+
+# Get logger instance
+logger = get_logger(__name__)
 
 app = FastAPI(
     title="N8N SSO Gateway",

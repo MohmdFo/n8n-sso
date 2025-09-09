@@ -9,8 +9,9 @@ from fastapi import HTTPException
 from apps.integrations.n8n_client import N8NClient
 from apps.integrations.n8n_db import get_user_by_email
 from conf.settings import get_settings
+from conf.enhanced_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 class CasdoorWebhookPayload:
     """Represents a Casdoor webhook payload."""

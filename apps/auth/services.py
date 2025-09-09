@@ -20,8 +20,9 @@ from apps.integrations.n8n_db import (
 )
 from apps.integrations.n8n_client import N8NClient
 from conf.settings import get_settings
+from conf.enhanced_logging import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 def extract_n8n_auth_cookie(response) -> str | None:
     """Extract n8n-auth cookie from httpx Response."""
