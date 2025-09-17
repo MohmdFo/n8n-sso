@@ -353,14 +353,14 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
         
     except HTTPException as http_exc:
         if http_exc.detail == "Authorization code already used":
-            # Code already used, redirect to referrer or default
+            # Code already used, redirect to default URL
             logger.warning("Authorization code already used, redirecting user", extra={
                 "request_id": request_id,
                 "code": code,
                 "state": state
             })
-            referrer = request.headers.get("referer", "/")
-            return RedirectResponse(url=referrer, status_code=302)
+            settings = get_settings()
+            return RedirectResponse(url=settings.DEFAULT_REDIRECT_URL, status_code=302)
         else:
             # Other HTTPExceptions - log and redirect with generic message
             logger.warning("Unexpected HTTP error during token processing, redirecting user", extra={
@@ -368,12 +368,12 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                 "status_code": http_exc.status_code,
                 "detail": http_exc.detail
             })
-            referrer = request.headers.get("referer", "/")
-            return RedirectResponse(url=referrer, status_code=302)
+            settings = get_settings()
+            return RedirectResponse(url=settings.DEFAULT_REDIRECT_URL, status_code=302)
     except Exception as exc:
         logger.exception("Unexpected error during token processing, redirecting user", extra={"request_id": request_id})
-        referrer = request.headers.get("referer", "/")
-        return RedirectResponse(url=referrer, status_code=302)
+        settings = get_settings()
+        return RedirectResponse(url=settings.DEFAULT_REDIRECT_URL, status_code=302)
 
     try:
         settings = get_settings()

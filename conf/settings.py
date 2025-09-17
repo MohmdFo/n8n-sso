@@ -32,6 +32,9 @@ class Settings(BaseSettings):
     COOKIE_SECURE: bool = True
     SECRET_KEY: str | None = None
 
+    # Default redirect URL when no referrer is available
+    DEFAULT_REDIRECT_URL: str = "https://panel.ai-lab.ir/"
+
     class Config:
         case_sensitive = True
         env_file = ".env"
