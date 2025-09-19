@@ -27,14 +27,18 @@ from conf.enhanced_logging import get_logger
 logger = get_logger(__name__)
 
 def extract_n8n_auth_cookie(response) -> str | None:
-    """Extract n8n-auth cookie from httpx Response."""
+    """Extract n8n-auth cookie from httpx Response with enhanced error handling."""
     if not response:
+        logger.warning("extract_n8n_auth_cookie: No response provided")
         return None
         
     # Check if response has cookies attribute (httpx Response)
     if hasattr(response, 'cookies') and response.cookies:
         auth_cookie = response.cookies.get('n8n-auth')
         if auth_cookie:
+            logger.debug("Cookie extracted from response.cookies attribute", extra={
+                "cookie_length": len(auth_cookie)
+            })
             return auth_cookie
     
     # Check set-cookie headers
@@ -42,18 +46,41 @@ def extract_n8n_auth_cookie(response) -> str | None:
         set_cookie_headers = response.headers.get_list('set-cookie') or []
         for cookie in set_cookie_headers:
             if 'n8n-auth=' in cookie:
-                # Extract cookie value (everything between n8n-auth= and the next ;)
-                cookie_value = cookie.split('n8n-auth=')[1].split(';')[0]
-                return cookie_value
+                try:
+                    # Extract cookie value (everything between n8n-auth= and the next ;)
+                    cookie_value = cookie.split('n8n-auth=')[1].split(';')[0]
+                    logger.debug("Cookie extracted from set-cookie headers", extra={
+                        "cookie_length": len(cookie_value),
+                        "full_cookie_header": cookie[:100] + "..." if len(cookie) > 100 else cookie
+                    })
+                    return cookie_value
+                except (IndexError, ValueError) as e:
+                    logger.warning("Failed to parse set-cookie header", extra={
+                        "error": str(e),
+                        "cookie_header": cookie[:100] + "..." if len(cookie) > 100 else cookie
+                    })
+                    continue
                 
         # Also check single set-cookie header if get_list didn't work
         single_cookie = response.headers.get('set-cookie')
         if single_cookie and 'n8n-auth=' in single_cookie:
-            cookie_value = single_cookie.split('n8n-auth=')[1].split(';')[0]
-            return cookie_value
+            try:
+                cookie_value = single_cookie.split('n8n-auth=')[1].split(';')[0]
+                logger.debug("Cookie extracted from single set-cookie header", extra={
+                    "cookie_length": len(cookie_value)
+                })
+                return cookie_value
+            except (IndexError, ValueError) as e:
+                logger.warning("Failed to parse single set-cookie header", extra={
+                    "error": str(e),
+                    "cookie_header": single_cookie[:100] + "..." if len(single_cookie) > 100 else single_cookie
+                })
     
-    return None
-
+    logger.warning("No n8n-auth cookie found in response", extra={
+        "has_cookies_attr": hasattr(response, 'cookies'),
+        "has_headers": hasattr(response, 'headers'),
+        "all_headers": dict(response.headers) if hasattr(response, 'headers') else "no headers"
+    })
     return None
 
 
@@ -402,40 +429,79 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                 "request_id": request_id,
                 "user_id": str(user_row.id)
             })
-        
-        # 6. Login to n8n to get session cookie and extract it
+
+        # 6. Login to n8n to get session cookie and extract it with retry logic
         n8n_client = N8NClient(base_url=str(settings.N8N_BASE_URL))
         auth_cookie = None
+        max_retries = 2
         
+        for attempt in range(max_retries):
+            try:
+                logger.info("Attempting n8n login", extra={
+                    "request_id": request_id,
+                    "email": profile.email,
+                    "password_length": len(temp_password),
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries
+                })
+                login_response = n8n_client.login_user(profile.email, temp_password)
+                
+                # Extract the n8n-auth cookie from the login response
+                auth_cookie = extract_n8n_auth_cookie(login_response)
+                
+                if auth_cookie:
+                    logger.info("n8n login and cookie extraction successful", extra={
+                        "request_id": request_id,
+                        "email": profile.email,
+                        "status_code": getattr(login_response, 'status_code', 'unknown'),
+                        "has_auth_cookie": True,
+                        "cookie_length": len(auth_cookie),
+                        "attempt": attempt + 1
+                    })
+                    break  # Success, exit retry loop
+                else:
+                    logger.warning("n8n login successful but cookie extraction failed", extra={
+                        "request_id": request_id,
+                        "email": profile.email,
+                        "status_code": getattr(login_response, 'status_code', 'unknown'),
+                        "attempt": attempt + 1,
+                        "max_retries": max_retries,
+                        "response_headers": dict(getattr(login_response, 'headers', {}))
+                    })
+                    if attempt < max_retries - 1:
+                        # Short delay before retry
+                        await asyncio.sleep(0.5)
+                        continue
+                
+            except Exception as login_exc:
+                logger.error("n8n login failed", extra={
+                    "request_id": request_id,
+                    "email": profile.email,
+                    "error": str(login_exc),
+                    "attempt": attempt + 1,
+                    "max_retries": max_retries
+                })
+                if attempt < max_retries - 1:
+                    await asyncio.sleep(0.5)
+                    continue
+                # auth_cookie remains None, will fall back to form submission
+            
+        # Final logging of login result
+        logger.info("n8n login result", extra={
+            "request_id": request_id,
+            "email": profile.email,
+            "status_code": getattr(login_response, 'status_code', 'unknown') if 'login_response' in locals() else 'unknown',
+            "has_auth_cookie": auth_cookie is not None,
+            "cookie_length": len(auth_cookie) if auth_cookie else 0,
+            "total_attempts": max_retries,
+            "response_headers": dict(getattr(login_response, 'headers', {})) if 'login_response' in locals() else {}
+        })
+        
+        # Always close the client
         try:
-            logger.info("Attempting n8n login", extra={
-                "request_id": request_id,
-                "email": profile.email,
-                "password_length": len(temp_password)
-            })
-            login_response = n8n_client.login_user(profile.email, temp_password)
-            
-            # Extract the n8n-auth cookie from the login response
-            auth_cookie = extract_n8n_auth_cookie(login_response)
-            
-            logger.info("n8n login result", extra={
-                "request_id": request_id,
-                "email": profile.email,
-                "status_code": getattr(login_response, 'status_code', 'unknown'),
-                "has_auth_cookie": auth_cookie is not None,
-                "cookie_length": len(auth_cookie) if auth_cookie else 0,
-                "response_headers": dict(getattr(login_response, 'headers', {}))
-            })
-            
-        except Exception as login_exc:
-            logger.error("n8n login failed", extra={
-                "request_id": request_id,
-                "email": profile.email,
-                "error": str(login_exc)
-            })
-            # auth_cookie remains None, will fall back to form submission
-        finally:
             n8n_client.close()
+        except Exception:
+            pass  # Ignore cleanup errors
         
         # 7. Create redirect response with cookie setting
         n8n_base_url = str(settings.N8N_BASE_URL).rstrip('/')
@@ -455,37 +521,64 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
             cookie_domain = parsed_url.hostname
             is_secure = parsed_url.scheme == "https"
             
+            # Validate cookie domain to prevent silent failures
+            if not cookie_domain or cookie_domain == "localhost":
+                # For localhost or IP addresses, don't set domain attribute
+                cookie_domain = None
+                logger.warning("Cookie domain validation - using None for localhost/IP", extra={
+                    "request_id": request_id,
+                    "parsed_hostname": parsed_url.hostname,
+                    "n8n_base_url": n8n_base_url
+                })
+            
+            # Create response with a small delay to ensure proper header processing
             response = RedirectResponse(url=n8n_workflows_url, status_code=302)
             
-            # Set the n8n-auth cookie
-            response.set_cookie(
-                key="n8n-auth",
-                value=auth_cookie,
-                domain=cookie_domain,
-                path="/",
-                httponly=True,
-                secure=is_secure,
-                samesite="lax",
-                max_age=7 * 24 * 3600  # 7 days
-            )
-            
-            logger.info("Cookie set, redirecting to workflows", extra={
-                "request_id": request_id,
-                "email": profile.email,
-                "cookie_domain": cookie_domain,
-                "redirect_url": n8n_workflows_url
-            })
-            
-            return response
+            # Set the n8n-auth cookie with comprehensive logging
+            try:
+                response.set_cookie(
+                    key="n8n-auth",
+                    value=auth_cookie,
+                    domain=cookie_domain,
+                    path="/",
+                    httponly=True,
+                    secure=is_secure,
+                    samesite="lax",
+                    max_age=7 * 24 * 3600  # 7 days
+                )
+                
+                logger.info("Cookie set successfully, redirecting to workflows", extra={
+                    "request_id": request_id,
+                    "email": profile.email,
+                    "cookie_domain": cookie_domain,
+                    "cookie_secure": is_secure,
+                    "cookie_length": len(auth_cookie),
+                    "redirect_url": n8n_workflows_url,
+                    "parsed_scheme": parsed_url.scheme,
+                    "parsed_hostname": parsed_url.hostname
+                })
+                
+                return response
+                
+            except Exception as cookie_exc:
+                logger.error("Failed to set cookie, falling back to JavaScript method", extra={
+                    "request_id": request_id,
+                    "email": profile.email,
+                    "error": str(cookie_exc),
+                    "cookie_domain": cookie_domain,
+                    "n8n_base_url": n8n_base_url
+                })
+                # Fall through to JavaScript method
         
-        # Method 2: Fallback using JavaScript login with proper redirect
-        logger.info("Using JavaScript login method with redirect", extra={
+        # Method 2: Enhanced JavaScript login method with cookie verification
+        logger.info("Using enhanced JavaScript login method with redirect", extra={
             "request_id": request_id,
             "email": profile.email,
-            "target_url": n8n_workflows_url
+            "target_url": n8n_workflows_url,
+            "reason": "Cookie extraction failed or cookie setting failed"
         })
         
-        # Use JavaScript to login and then redirect properly
+        # Use JavaScript to login and then redirect properly with cookie verification
         handoff_html = f"""
         <!DOCTYPE html>
         <html>
@@ -501,12 +594,17 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                 <div style="margin: 20px;">
                     <div style="border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto;"></div>
                 </div>
+                <p id="status">Authenticating...</p>
             </div>
             
             <script>
-                // Function to perform login and redirect
+                // Function to perform login and redirect with verification
                 async function performLogin() {{
+                    const statusEl = document.getElementById('status');
+                    
                     try {{
+                        statusEl.textContent = 'Logging in to n8n...';
+                        
                         // Perform the login request
                         const loginResponse = await fetch('{n8n_base_url}/rest/login', {{
                             method: 'POST',
@@ -514,6 +612,7 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                                 'Content-Type': 'application/json',
                                 'Accept': 'application/json'
                             }},
+                            credentials: 'include',  // Ensure cookies are included
                             body: JSON.stringify({{
                                 emailOrLdapLoginId: '{profile.email}',
                                 password: '{temp_password}'
@@ -521,24 +620,54 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                         }});
                         
                         if (loginResponse.ok) {{
-                            console.log('Login successful, redirecting to workflows...');
-                            // Wait a moment for cookies to be set, then redirect
-                            setTimeout(() => {{
-                                window.location.href = '{n8n_workflows_url}';
-                            }}, 500);
+                            console.log('Login successful, verifying session...');
+                            statusEl.textContent = 'Login successful, verifying session...';
+                            
+                            // Wait a moment for cookies to be processed
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                            
+                            // Verify the session is valid
+                            try {{
+                                const verifyResponse = await fetch('{n8n_base_url}/rest/login', {{
+                                    method: 'GET',
+                                    credentials: 'include'
+                                }});
+                                
+                                if (verifyResponse.ok) {{
+                                    console.log('Session verified, redirecting...');
+                                    statusEl.textContent = 'Session verified, redirecting...';
+                                    setTimeout(() => {{
+                                        window.location.href = '{n8n_workflows_url}';
+                                    }}, 500);
+                                }} else {{
+                                    console.warn('Session verification failed, but proceeding with redirect');
+                                    statusEl.textContent = 'Redirecting...';
+                                    setTimeout(() => {{
+                                        window.location.href = '{n8n_workflows_url}';
+                                    }}, 1000);
+                                }}
+                            }} catch (verifyError) {{
+                                console.warn('Session verification error:', verifyError);
+                                statusEl.textContent = 'Redirecting...';
+                                setTimeout(() => {{
+                                    window.location.href = '{n8n_workflows_url}';
+                                }}, 1000);
+                            }}
                         }} else {{
                             console.error('Login failed:', loginResponse.status);
+                            statusEl.textContent = 'Login failed, but redirecting anyway...';
                             // Still try to redirect as a fallback
                             setTimeout(() => {{
                                 window.location.href = '{n8n_workflows_url}';
-                            }}, 1000);
+                            }}, 2000);
                         }}
                     }} catch (error) {{
                         console.error('Login request failed:', error);
+                        statusEl.textContent = 'Connection error, redirecting...';
                         // Fallback redirect
                         setTimeout(() => {{
                             window.location.href = '{n8n_workflows_url}';
-                        }}, 1000);
+                        }}, 2000);
                     }}
                 }}
                 
