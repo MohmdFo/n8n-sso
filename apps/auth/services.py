@@ -693,4 +693,16 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
             "request_id": request_id,
             "email": profile.email if 'profile' in locals() else "unknown"
         })
-        raise HTTPException(status_code=502, detail="Upstream n8n error")
+        # Instead of raising, redirect to DEFAULT_REDIRECT_URL with a flash message
+        settings = get_settings()
+        # Add a flash message via query param (or use your preferred flash mechanism)
+        redirect_url = settings.DEFAULT_REDIRECT_URL
+        flash_msg = "n8n SSO error: Could not complete login. Please try again later."
+        from urllib.parse import urlencode, urlparse, urlunparse, parse_qs
+        # Append flash message as ?flash=... or &flash=...
+        url_parts = list(urlparse(redirect_url))
+        query = parse_qs(url_parts[4])
+        query['flash'] = [flash_msg]
+        url_parts[4] = urlencode(query, doseq=True)
+        safe_redirect_url = urlunparse(url_parts)
+        return RedirectResponse(url=safe_redirect_url, status_code=302)
