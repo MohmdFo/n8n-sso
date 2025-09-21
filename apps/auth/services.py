@@ -486,14 +486,57 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                 "user_id": str(user_row.id)
             })
 
-        # Check if user already has a persistent session
+        # Check if user already has a local session (for tracking only)
         existing_session = SessionManager.get_active_session(profile.email)
-        if existing_session and existing_session.is_persistent:
-            logger.info("User already has persistent session, using existing", extra={
+        session_id = None
+        skip_n8n_login = False
+        
+        if existing_session:
+            # Check if existing session has a very recent cookie (< 60 seconds old)
+            session_age = time.time() - existing_session.created_at
+            is_very_recent = session_age < 60
+            has_cookie = existing_session.n8n_cookie is not None
+            
+            if is_very_recent and has_cookie and existing_session.is_persistent:
+                logger.info("Found very recent persistent session with cookie, skipping n8n login", extra={
+                    "request_id": request_id,
+                    "email": profile.email,
+                    "session_id": existing_session.session_id,
+                    "session_age": session_age,
+                    "is_persistent": existing_session.is_persistent,
+                    "has_cookie": has_cookie,
+                    "decision": "skip_n8n_login_use_recent_cookie"
+                })
+                skip_n8n_login = True
+                session_id = existing_session.session_id
+            else:
+                logger.debug("Found existing local session but will refresh via n8n login", extra={
+                    "request_id": request_id,
+                    "email": profile.email,
+                    "session_id": existing_session.session_id,
+                    "session_age": session_age,
+                    "is_persistent": existing_session.is_persistent,
+                    "has_cookie": has_cookie,
+                    "is_very_recent": is_very_recent,
+                    "decision": "will_refresh_via_n8n_login"
+                })
+                session_id = existing_session.session_id
+        else:
+            # Create new session for tracking
+            session_id = SessionManager.create_session(profile.email)
+            logger.debug("Created new session for tracking", extra={
                 "request_id": request_id,
                 "email": profile.email,
-                "session_id": existing_session.session_id,
-                "session_age": time.time() - existing_session.created_at
+                "session_id": session_id
+            })
+
+        # Use existing recent cookie if available, otherwise attempt n8n login
+        if skip_n8n_login:
+            logger.info("Using existing recent cookie, skipping n8n login", extra={
+                "request_id": request_id,
+                "email": profile.email,
+                "session_id": session_id,
+                "reason": "very_recent_persistent_session_available"
             })
             
             # Use existing session cookie
@@ -523,21 +566,23 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                 max_age=7 * 24 * 3600
             )
             
-            logger.info("Redirected using existing persistent session", extra={
+            logger.info("Redirected using existing recent persistent session", extra={
                 "request_id": request_id,
                 "email": profile.email,
-                "session_id": existing_session.session_id
+                "session_id": session_id
             })
             
             return response
-        
-        # Create new session
-        session_id = SessionManager.create_session(profile.email)
-        logger.info("Created new session for user", extra={
-            "request_id": request_id,
-            "email": profile.email,
-            "session_id": session_id
-        })
+        else:
+            # Attempt n8n login for fresh session
+            logger.info("Proceeding with n8n login after Casdoor authentication", extra={
+                "request_id": request_id,
+                "email": profile.email,
+                "session_id": session_id,
+                "reason": "ensure_fresh_valid_n8n_session",
+                "had_existing_session": existing_session is not None,
+                "existing_session_age": time.time() - existing_session.created_at if existing_session else None
+            })
 
         # 6. Login to n8n to get session cookie and extract it with retry logic
         n8n_client = N8NClient(base_url=str(settings.N8N_BASE_URL))
