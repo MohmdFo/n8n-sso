@@ -186,11 +186,12 @@ async def handle_casdoor_logout_webhook(payload: Dict[str, Any]) -> Dict[str, An
             n8n_client.close()
             
     except Exception as exc:
-        logger.exception("Webhook processing failed", extra={
+        logger.critical("Webhook processing failed", extra={
             "request_id": request_id,
             "email": user_email,
-            "error": str(exc)
-        })
+            "error": str(exc),
+            "error_type": type(exc).__name__
+        }, exc_info=exc)
         raise HTTPException(
             status_code=500, 
             detail=f"Webhook processing failed: {str(exc)}"

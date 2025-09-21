@@ -23,6 +23,7 @@ from apps.integrations.n8n_db import (
 from apps.integrations.n8n_client import N8NClient
 from conf.settings import get_settings
 from conf.enhanced_logging import get_logger
+from apps.core.error_handling import create_safe_redirect, log_and_redirect_on_error
 
 logger = get_logger(__name__)
 
@@ -84,17 +85,16 @@ def extract_n8n_auth_cookie(response) -> str | None:
     return None
 
 
-async def get_oauth_token(code: str) -> dict:
+async def get_oauth_token(code: str, request_id: str = None):
     """
     Exchange the Casdoor OAuth authorization code for an access token.
 
     This function sends a POST request to the Casdoor token endpoint with the provided code.
-    If the response status is not 200 (OK), it raises an HTTPException after 3 retry attempts.
-    For invalid_grant errors (code already used), it does not retry.
+    Instead of raising exceptions, it returns either token data or a safe redirect response.
 
     :param code: The authorization code received from Casdoor.
-    :return: A dictionary representing the OAuth token response (expected to contain an "id_token").
-    :raises HTTPException: If the token request fails after all retries (status code != 200).
+    :param request_id: Optional request ID for tracking.
+    :return: Either a dictionary with OAuth token data or a RedirectResponse for errors.
     """
     settings = get_settings()
     url = f"{str(settings.CASDOOR_ENDPOINT).rstrip('/')}/api/login/oauth/access_token"
@@ -152,9 +152,15 @@ async def get_oauth_token(code: str) -> dict:
                         })
                         
                         if attempt == max_retries - 1:
-                            raise HTTPException(
-                                status_code=502, 
-                                detail=f"Invalid JSON response from Casdoor: {str(json_error)}"
+                            return create_safe_redirect(
+                                error=ValueError(f"Invalid JSON response from Casdoor: {str(json_error)}"),
+                                flash_message="Authentication failed. Please try again.",
+                                context={
+                                    "operation": "get_oauth_token",
+                                    "error_type": "json_parse_error",
+                                    "status_code": response.status_code
+                                },
+                                request_id=request_id
                             )
                 else:
                     # Check for invalid_grant error
@@ -162,15 +168,21 @@ async def get_oauth_token(code: str) -> dict:
                         try:
                             error_data = response.json()
                             if error_data.get("error") == "invalid_grant" and "authorization code has been used" in error_data.get("error_description", ""):
-                                # Code already used, don't retry
+                                # Code already used, don't retry - return redirect instead of raising
                                 logger.warning("Authorization code already used", extra={
                                     "attempt": attempt + 1,
                                     "code": code,
                                     "error": error_data
                                 })
-                                raise HTTPException(
-                                    status_code=400,
-                                    detail="Authorization code already used"
+                                return create_safe_redirect(
+                                    error=ValueError("Authorization code already used"),
+                                    flash_message="Login session expired. Please try again.",
+                                    context={
+                                        "operation": "get_oauth_token",
+                                        "error_type": "invalid_grant",
+                                        "code": code
+                                    },
+                                    request_id=request_id
                                 )
                         except ValueError:
                             pass  # Not JSON, handle as normal
@@ -184,10 +196,17 @@ async def get_oauth_token(code: str) -> dict:
                     })
                     
                     if attempt == max_retries - 1:
-                        # Final attempt failed
-                        raise HTTPException(
-                            status_code=400, 
-                            detail=f"Failed to obtain token after {max_retries} attempts. Last status: {response.status_code}, Response: {response.text[:200]}"
+                        # Final attempt failed - return redirect instead of raising
+                        return create_safe_redirect(
+                            error=RuntimeError(f"Failed to obtain token after {max_retries} attempts. Last status: {response.status_code}"),
+                            flash_message="Authentication service unavailable. Please try again later.",
+                            context={
+                                "operation": "get_oauth_token",
+                                "error_type": "max_retries_exceeded",
+                                "status_code": response.status_code,
+                                "response_text": response.text[:200]
+                            },
+                            request_id=request_id
                         )
             
             except httpx.RequestError as req_error:
@@ -198,9 +217,15 @@ async def get_oauth_token(code: str) -> dict:
                 })
                 
                 if attempt == max_retries - 1:
-                    raise HTTPException(
-                        status_code=502, 
-                        detail=f"Network error requesting token after {max_retries} attempts: {str(req_error)}"
+                    return create_safe_redirect(
+                        error=req_error,
+                        flash_message="Network error during authentication. Please try again.",
+                        context={
+                            "operation": "get_oauth_token",
+                            "error_type": "network_error",
+                            "url": url
+                        },
+                        request_id=request_id
                     )
             
             # Wait before retrying (exponential backoff)
@@ -214,16 +239,17 @@ async def get_oauth_token(code: str) -> dict:
                 await asyncio.sleep(delay)
 
 
-def parse_jwt_token(token: str) -> dict:
+def parse_jwt_token(token: str, request_id: str = None):
     """
     Verify and decode the provided JWT token using the Casdoor certificate.
 
     This function loads the certificate, extracts the public key, and attempts to decode
     the JWT with the audience set to the Casdoor client ID and a leeway of 60 seconds.
+    Instead of raising exceptions, it returns either the decoded token or a safe redirect.
 
     :param token: The JWT token string to be parsed.
-    :return: A dictionary containing the decoded token payload.
-    :raises jwt.PyJWTError: If the token validation or decoding fails.
+    :param request_id: Optional request ID for tracking.
+    :return: Either a dictionary with decoded token payload or a RedirectResponse for errors.
     """
     settings = get_settings()
     
@@ -236,7 +262,16 @@ def parse_jwt_token(token: str) -> dict:
         public_key = certificate.public_key()
     except Exception as e:
         logger.error(f"Error loading certificate: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Certificate loading error: {str(e)}")
+        return create_safe_redirect(
+            error=e,
+            flash_message="Authentication configuration error. Please contact support.",
+            context={
+                "operation": "parse_jwt_token",
+                "error_type": "certificate_loading_error",
+                "cert_path": settings.CASDOOR_CERT_PATH
+            },
+            request_id=request_id
+        )
     
     # First, try to decode without audience validation to see what the actual audience is
     try:
@@ -314,18 +349,36 @@ def parse_jwt_token(token: str) -> dict:
             )
         except Exception as fallback_error:
             logger.error(f"Fallback token decoding also failed: {str(fallback_error)}")
-            raise HTTPException(status_code=400, detail=f"Token decoding failed: {str(fallback_error)}")
+            return create_safe_redirect(
+                error=fallback_error,
+                flash_message="Invalid authentication token. Please try logging in again.",
+                context={
+                    "operation": "parse_jwt_token",
+                    "error_type": "token_decoding_failed",
+                    "token_length": len(token) if token else 0
+                },
+                request_id=request_id
+            )
 
 
-def map_casdoor_to_profile(user_info: Dict[str, Any]) -> CasdoorProfile:
-    """Map Casdoor JWT claims to CasdoorProfile."""
+def map_casdoor_to_profile(user_info: Dict[str, Any], request_id: str = None):
+    """Map Casdoor JWT claims to CasdoorProfile. Returns either profile or safe redirect."""
     email = (
         user_info.get("email") 
-        or user_info.get("mail") 
+        or user_info.get("mail")
         or user_info.get("preferred_username")
     )
     if not email:
-        raise ValueError("Casdoor profile missing email")
+        return create_safe_redirect(
+            error=ValueError("Casdoor profile missing email"),
+            flash_message="Authentication profile incomplete. Please contact support.",
+            context={
+                "operation": "map_casdoor_to_profile",
+                "error_type": "missing_email",
+                "available_fields": list(user_info.keys())
+            },
+            request_id=request_id
+        )
     
     name = user_info.get("name") or user_info.get("display_name") or ""
     first_name = user_info.get("given_name")
@@ -355,22 +408,55 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
     state = request.query_params.get("state")
     
     if not code:
-        raise HTTPException(status_code=400, detail="Missing authorization code")
+        return log_and_redirect_on_error(
+            error_message="Missing authorization code in OAuth callback",
+            flash_message="Authentication failed. Please try logging in again.",
+            context={
+                "operation": "handle_casdoor_callback",
+                "error_type": "missing_auth_code",
+                "query_params": dict(request.query_params)
+            },
+            request_id=request_id
+        )
 
     # TODO: Validate state (retrieve from session/cache for CSRF protection)
     
     try:
         # 1. Exchange code for tokens via existing helper
-        token_info = await get_oauth_token(code)
+        token_result = await get_oauth_token(code, request_id)
+        # Check if it's a redirect response (error case)
+        if isinstance(token_result, RedirectResponse):
+            return token_result
+        
+        token_info = token_result
         id_token = token_info.get("id_token")
         if not id_token:
-            raise HTTPException(status_code=400, detail="Token response missing id_token")
+            return log_and_redirect_on_error(
+                error_message="Token response missing id_token",
+                flash_message="Authentication failed. Please try again.",
+                context={
+                    "operation": "handle_casdoor_callback",
+                    "error_type": "missing_id_token",
+                    "token_keys": list(token_info.keys())
+                },
+                request_id=request_id
+            )
 
         # 2. Parse and verify JWT token
-        user_info = parse_jwt_token(id_token)
+        parse_result = parse_jwt_token(id_token, request_id)
+        # Check if it's a redirect response (error case)
+        if isinstance(parse_result, RedirectResponse):
+            return parse_result
+        
+        user_info = parse_result
         
         # 3. Map to CasdoorProfile
-        profile = map_casdoor_to_profile(user_info)
+        profile_result = map_casdoor_to_profile(user_info, request_id)
+        # Check if it's a redirect response (error case)
+        if isinstance(profile_result, RedirectResponse):
+            return profile_result
+        
+        profile = profile_result
         
         logger.info("Casdoor user authenticated", extra={
             "request_id": request_id,
@@ -378,26 +464,8 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
             "casdoor_id": profile.casdoor_id
         })
         
-    except HTTPException as http_exc:
-        if http_exc.detail == "Authorization code already used":
-            # Code already used, redirect to default URL
-            logger.warning("Authorization code already used, redirecting user", extra={
-                "request_id": request_id,
-                "code": code,
-                "state": state
-            })
-            settings = get_settings()
-            return RedirectResponse(url=settings.DEFAULT_REDIRECT_URL, status_code=302)
-        else:
-            # Other HTTPExceptions - log and redirect with generic message
-            logger.warning("Unexpected HTTP error during token processing, redirecting user", extra={
-                "request_id": request_id,
-                "status_code": http_exc.status_code,
-                "detail": http_exc.detail
-            })
-            settings = get_settings()
-            return RedirectResponse(url=settings.DEFAULT_REDIRECT_URL, status_code=302)
     except Exception as exc:
+        # Any remaining unhandled exceptions
         logger.exception("Unexpected error during token processing, redirecting user", extra={"request_id": request_id})
         settings = get_settings()
         return RedirectResponse(url=settings.DEFAULT_REDIRECT_URL, status_code=302)

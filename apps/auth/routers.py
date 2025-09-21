@@ -9,6 +9,7 @@ from fastapi.responses import RedirectResponse
 from .services import handle_casdoor_callback
 from .casdoor_utils import get_casdoor_login_url
 from .webhook_services import handle_casdoor_logout_webhook
+from apps.core.error_handling import create_safe_redirect, safe_api_operation
 from conf.enhanced_logging import get_logger
 
 logger = get_logger(__name__)
@@ -37,19 +38,20 @@ async def casdoor_callback(request: Request):
         })
         
         return result
-    except HTTPException as http_exc:
-        logger.warning("OAuth callback HTTP error", extra={
-            "request_id": request_id,
-            "status_code": http_exc.status_code,
-            "detail": http_exc.detail
-        })
-        raise
     except Exception as exc:
         logger.exception("Unhandled exception in Casdoor callback", extra={
             "request_id": request_id,
             "error_type": type(exc).__name__
         })
-        raise HTTPException(status_code=500, detail="Internal error") from exc
+        return create_safe_redirect(
+            error=exc,
+            flash_message="Login failed. Please try again.",
+            context={
+                "operation": "casdoor_callback",
+                "error_type": type(exc).__name__
+            },
+            request_id=request_id
+        )
 
 
 @router.get("/login", summary="Start Casdoor login and redirect to n8n")
@@ -81,7 +83,15 @@ async def casdoor_login(request: Request):
             "request_id": request_id,
             "error_type": type(exc).__name__
         })
-        raise HTTPException(status_code=500, detail="Login service unavailable") from exc
+        return create_safe_redirect(
+            error=exc,
+            flash_message="Login service unavailable. Please try again later.",
+            context={
+                "operation": "casdoor_login",
+                "error_type": type(exc).__name__
+            },
+            request_id=request_id
+        )
 
 
 @router.post("/webhook", summary="Casdoor webhook for logout synchronization")
@@ -126,16 +136,17 @@ async def casdoor_webhook(request: Request):
         }
         
     except ValueError as json_exc:
-        logger.error("Invalid JSON in webhook payload", extra={
+        logger.critical("Invalid JSON in webhook payload", extra={
             "webhook_id": webhook_id,
             "error": str(json_exc)
-        })
+        }, exc_info=json_exc)
         raise HTTPException(status_code=400, detail="Invalid JSON payload") from json_exc
     except Exception as exc:
-        logger.exception("Webhook processing failed", extra={
+        logger.critical("Webhook processing failed", extra={
             "webhook_id": webhook_id,
-            "error_type": type(exc).__name__
-        })
+            "error_type": type(exc).__name__,
+            "error_message": str(exc)
+        }, exc_info=exc)
         raise HTTPException(status_code=500, detail="Webhook processing failed") from exc
 
 
@@ -206,4 +217,12 @@ async def casdoor_logout(request: Request):
             "logout_id": logout_id,
             "error_type": type(exc).__name__
         })
-        raise HTTPException(status_code=500, detail="Logout failed") from exc
+        return create_safe_redirect(
+            error=exc,
+            flash_message="Logout failed. Please try again.",
+            context={
+                "operation": "casdoor_logout",
+                "error_type": type(exc).__name__
+            },
+            request_id=logout_id
+        )

@@ -86,8 +86,11 @@ async def get_metrics(request: Request) -> Response:
         )
         
     except Exception as exc:
-        # Log the error
-        logger.error(f"Error generating metrics: {str(exc)}", exc_info=True)
+        # Log the error as critical
+        logger.critical(f"Error generating metrics: {str(exc)}", extra={
+            "error_type": type(exc).__name__,
+            "operation": "generate_metrics"
+        }, exc_info=True)
         
         # Update service health metric to indicate the endpoint is unhealthy
         update_service_health(
@@ -181,8 +184,11 @@ async def metrics_health_check() -> Dict[str, Any]:
         }
         
     except Exception as exc:
-        # Log the error
-        logger.error(f"Metrics health check failed: {str(exc)}", exc_info=True)
+        # Log the error as critical
+        logger.critical(f"Metrics health check failed: {str(exc)}", extra={
+            "error_type": type(exc).__name__,
+            "operation": "metrics_health_check"
+        }, exc_info=True)
         
         # Update service health metric
         update_service_health(
@@ -268,7 +274,10 @@ async def get_metrics_info() -> Dict[str, Any]:
         }
         
     except Exception as exc:
-        logger.error(f"Error getting metrics info: {str(exc)}", exc_info=True)
+        logger.critical(f"Error getting metrics info: {str(exc)}", extra={
+            "error_type": type(exc).__name__,
+            "operation": "get_metrics_info"
+        }, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get metrics info: {str(exc)}"
@@ -349,7 +358,10 @@ async def reset_metrics(request: Request) -> Dict[str, Any]:
         }
         
     except Exception as exc:
-        logger.error(f"Error resetting metrics: {str(exc)}", exc_info=True)
+        logger.critical(f"Error resetting metrics: {str(exc)}", extra={
+            "error_type": type(exc).__name__,
+            "operation": "reset_metrics"
+        }, exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to reset metrics: {str(exc)}"
