@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+import time
 import uuid
 import asyncio
 import requests
@@ -24,6 +25,7 @@ from apps.integrations.n8n_client import N8NClient
 from conf.settings import get_settings
 from conf.enhanced_logging import get_logger
 from apps.core.error_handling import create_safe_redirect, log_and_redirect_on_error
+from apps.auth.oauth_state import SessionManager
 
 logger = get_logger(__name__)
 
@@ -405,21 +407,7 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
     logger.info("Processing Casdoor callback", extra={"request_id": request_id})
     
     code = request.query_params.get("code")
-    state = request.query_params.get("state")
-    
-    if not code:
-        return log_and_redirect_on_error(
-            error_message="Missing authorization code in OAuth callback",
-            flash_message="Authentication failed. Please try logging in again.",
-            context={
-                "operation": "handle_casdoor_callback",
-                "error_type": "missing_auth_code",
-                "query_params": dict(request.query_params)
-            },
-            request_id=request_id
-        )
-
-    # TODO: Validate state (retrieve from session/cache for CSRF protection)
+    # Note: code and state validation is now handled in the router
     
     try:
         # 1. Exchange code for tokens via existing helper
@@ -497,6 +485,59 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
                 "request_id": request_id,
                 "user_id": str(user_row.id)
             })
+
+        # Check if user already has a persistent session
+        existing_session = SessionManager.get_active_session(profile.email)
+        if existing_session and existing_session.is_persistent:
+            logger.info("User already has persistent session, using existing", extra={
+                "request_id": request_id,
+                "email": profile.email,
+                "session_id": existing_session.session_id,
+                "session_age": time.time() - existing_session.created_at
+            })
+            
+            # Use existing session cookie
+            auth_cookie = existing_session.n8n_cookie
+            settings = get_settings()
+            n8n_base_url = str(settings.N8N_BASE_URL).rstrip('/')
+            n8n_workflows_url = f"{n8n_base_url}/home/workflows"
+            
+            # Create redirect response with existing cookie
+            from urllib.parse import urlparse
+            parsed_url = urlparse(n8n_base_url)
+            cookie_domain = parsed_url.hostname
+            is_secure = parsed_url.scheme == "https"
+            
+            if not cookie_domain or cookie_domain == "localhost":
+                cookie_domain = None
+            
+            response = RedirectResponse(url=n8n_workflows_url, status_code=302)
+            response.set_cookie(
+                key="n8n-auth",
+                value=auth_cookie,
+                domain=cookie_domain,
+                path="/",
+                httponly=True,
+                secure=is_secure,
+                samesite="lax",
+                max_age=7 * 24 * 3600
+            )
+            
+            logger.info("Redirected using existing persistent session", extra={
+                "request_id": request_id,
+                "email": profile.email,
+                "session_id": existing_session.session_id
+            })
+            
+            return response
+        
+        # Create new session
+        session_id = SessionManager.create_session(profile.email)
+        logger.info("Created new session for user", extra={
+            "request_id": request_id,
+            "email": profile.email,
+            "session_id": session_id
+        })
 
         # 6. Login to n8n to get session cookie and extract it with retry logic
         n8n_client = N8NClient(base_url=str(settings.N8N_BASE_URL))
@@ -576,6 +617,9 @@ async def handle_casdoor_callback(request: Request) -> RedirectResponse:
         n8n_workflows_url = f"{n8n_base_url}/home/workflows"
         
         if auth_cookie:
+            # Update session with persistent cookie
+            SessionManager.update_session_cookie(session_id, auth_cookie)
+            
             # Try the cookie method first (should work in production)
             logger.info("Cookie extracted - attempting direct redirect with cookie", extra={
                 "request_id": request_id,

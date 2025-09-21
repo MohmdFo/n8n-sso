@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import Dict, Any
 from fastapi import APIRouter, Request, HTTPException
@@ -9,6 +10,7 @@ from fastapi.responses import RedirectResponse
 from .services import handle_casdoor_callback
 from .casdoor_utils import get_casdoor_login_url
 from .webhook_services import handle_casdoor_logout_webhook
+from .oauth_state import create_secure_state, validate_callback_state, process_oauth_callback_safely
 from apps.core.error_handling import create_safe_redirect, safe_api_operation
 from conf.enhanced_logging import get_logger
 
@@ -29,26 +31,100 @@ async def casdoor_callback(request: Request):
         "query_params": dict(request.query_params)
     })
     
+    # Get and validate required parameters
+    code = request.query_params.get("code")
+    state = request.query_params.get("state")
+    
+    if not code:
+        logger.error("OAuth callback missing authorization code", extra={
+            "request_id": request_id,
+            "query_params": dict(request.query_params)
+        })
+        return create_safe_redirect(
+            error=ValueError("Missing authorization code"),
+            flash_message="Authentication failed. Please try logging in again.",
+            context={"operation": "oauth_callback", "error_type": "missing_code"},
+            request_id=request_id
+        )
+    
+    if not state:
+        logger.error("OAuth callback missing state parameter", extra={
+            "request_id": request_id,
+            "code_length": len(code)
+        })
+        return create_safe_redirect(
+            error=ValueError("Missing state parameter"),
+            flash_message="Authentication failed. Please try logging in again.",
+            context={"operation": "oauth_callback", "error_type": "missing_state"},
+            request_id=request_id
+        )
+    
+    # Validate OAuth state
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "unknown")
+    
+    oauth_state = validate_callback_state(state, client_ip, user_agent)
+    if not oauth_state:
+        logger.error("Invalid or expired OAuth state", extra={
+            "request_id": request_id,
+            "state": state,
+            "client_ip": client_ip
+        })
+        return create_safe_redirect(
+            error=ValueError("Invalid or expired authentication session"),
+            flash_message="Authentication session expired. Please try logging in again.",
+            context={"operation": "oauth_callback", "error_type": "invalid_state"},
+            request_id=request_id
+        )
+    
+    logger.info("OAuth state validated successfully", extra={
+        "request_id": request_id,
+        "state_request_id": oauth_state.request_id,
+        "state_age": time.time() - oauth_state.created_at
+    })
+    
     try:
-        result = await handle_casdoor_callback(request)
+        # Process callback safely with deduplication
+        result = await process_oauth_callback_safely(
+            code, 
+            handle_casdoor_callback, 
+            request
+        )
+        
+        if result is None:
+            # Code was already processed by another request
+            logger.warning("OAuth code already processed by concurrent request", extra={
+                "request_id": request_id,
+                "state_request_id": oauth_state.request_id
+            })
+            return create_safe_redirect(
+                error=ValueError("Authentication already completed"),
+                flash_message="You are already logged in.",
+                context={"operation": "oauth_callback", "error_type": "already_processed"},
+                request_id=request_id
+            )
         
         logger.info("OAuth callback completed successfully", extra={
             "request_id": request_id,
+            "state_request_id": oauth_state.request_id,
             "redirect_status": getattr(result, 'status_code', 'unknown')
         })
         
         return result
+        
     except Exception as exc:
-        logger.exception("Unhandled exception in Casdoor callback", extra={
+        logger.exception("Unhandled exception in OAuth callback", extra={
             "request_id": request_id,
+            "state_request_id": oauth_state.request_id,
             "error_type": type(exc).__name__
         })
         return create_safe_redirect(
             error=exc,
             flash_message="Login failed. Please try again.",
             context={
-                "operation": "casdoor_callback",
-                "error_type": type(exc).__name__
+                "operation": "oauth_callback",
+                "error_type": type(exc).__name__,
+                "state_request_id": oauth_state.request_id
             },
             request_id=request_id
         )
@@ -69,11 +145,19 @@ async def casdoor_login(request: Request):
     try:
         # Build callback URL for this FastAPI app
         callback_url = str(request.url_for("casdoor_callback"))
-        login_url = get_casdoor_login_url(callback_url)
+        
+        # Generate secure OAuth state
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "unknown")
+        state = create_secure_state(client_ip, user_agent, callback_url, request_id)
+        
+        # Generate login URL with state
+        login_url = get_casdoor_login_url(callback_url, state)
         
         logger.info("Redirecting to Casdoor login", extra={
             "request_id": request_id,
             "callback_url": callback_url,
+            "state": state,
             "login_url": login_url[:100] + "..." if len(login_url) > 100 else login_url
         })
         
