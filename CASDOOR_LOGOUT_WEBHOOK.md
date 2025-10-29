@@ -47,7 +47,7 @@ Address: https://your-production-domain.com/auth/casdoor/webhook
 
 #### Automatic Testing:
 ```bash
-python3 test_logout_webhook.py
+python3 apps/tests/test_logout_webhook.py
 ```
 
 #### Manual Testing:

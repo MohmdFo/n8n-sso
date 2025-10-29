@@ -93,7 +93,7 @@ COOKIE_SECURE=false  # Set to true for HTTPS
 Run the test script to validate the implementation:
 
 ```bash
-python test_sso_flow.py
+python apps/tests/test_sso_flow.py
 ```
 
 This will:

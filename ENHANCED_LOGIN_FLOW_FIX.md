@@ -59,9 +59,9 @@ Added detailed logging that shows:
 4. **Conservative reuse policy** to prevent stale cookie issues
 
 ### Test Coverage
-1. **test_fresh_login_flow.py** - Tests the basic session decision logic
-2. **test_session_decision_logic.py** - Tests the enhanced session validation
-3. **test_oauth_flow.py** - Validates overall OAuth flow integrity
+1. **apps/tests/test_fresh_login_flow.py** - Tests the basic session decision logic
+2. **apps/tests/test_session_decision_logic.py** - Tests the enhanced session validation
+3. **apps/tests/test_oauth_flow.py** - Validates overall OAuth flow integrity
 
 ## Debug Logging Output
 
