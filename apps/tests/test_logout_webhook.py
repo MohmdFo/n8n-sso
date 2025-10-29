@@ -3,6 +3,7 @@
 Test script to verify the Casdoor logout webhook functionality.
 """
 
+import pytest
 import asyncio
 import httpx
 import json
@@ -30,6 +31,7 @@ SAMPLE_LOGOUT_WEBHOOK = {
     }
 }
 
+@pytest.mark.asyncio
 async def test_webhook_endpoint():
     """Test the webhook endpoint with a sample logout event."""
     gateway_url = "http://107.189.19.66:8512"
@@ -60,6 +62,7 @@ async def test_webhook_endpoint():
         print(f"❌ Webhook test failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_manual_logout():
     """Test the manual logout endpoint."""
     gateway_url = "http://107.189.19.66:8512"
@@ -94,6 +97,7 @@ async def test_manual_logout():
         print(f"❌ Manual logout test failed: {e}")
         return False
 
+@pytest.mark.asyncio
 async def test_health_check():
     """Test that the gateway is running."""
     gateway_url = "http://107.189.19.66:8512"

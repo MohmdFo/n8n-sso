@@ -133,6 +133,7 @@ class TestGetOAuthToken:
     
     @patch('apps.auth.services.httpx.AsyncClient')
     @patch('apps.auth.services.get_settings')
+    @pytest.mark.asyncio
     async def test_get_oauth_token_success(self, mock_get_settings, mock_client_class):
         """Test successful OAuth token exchange."""
         # Mock settings
@@ -177,6 +178,7 @@ class TestGetOAuthToken:
     
     @patch('apps.auth.services.httpx.AsyncClient')
     @patch('apps.auth.services.get_settings')
+    @pytest.mark.asyncio
     async def test_get_oauth_token_invalid_grant(self, mock_get_settings, mock_client_class):
         """Test OAuth token exchange with invalid grant (code already used)."""
         # Mock settings
@@ -212,6 +214,7 @@ class TestGetOAuthToken:
     
     @patch('apps.auth.services.httpx.AsyncClient')
     @patch('apps.auth.services.get_settings')
+    @pytest.mark.asyncio
     async def test_get_oauth_token_network_error(self, mock_get_settings, mock_client_class):
         """Test OAuth token exchange with network error."""
         # Mock settings
@@ -239,6 +242,7 @@ class TestGetOAuthToken:
     
     @patch('apps.auth.services.httpx.AsyncClient')
     @patch('apps.auth.services.get_settings')
+    @pytest.mark.asyncio
     async def test_get_oauth_token_json_parse_error(self, mock_get_settings, mock_client_class):
         """Test OAuth token exchange with JSON parse error."""
         # Mock settings
@@ -474,6 +478,7 @@ class TestHandleCasdoorCallback:
     @patch('apps.auth.services.N8NClient')
     @patch('apps.auth.services.SessionManager')
     @patch('apps.auth.services.get_settings')
+    @pytest.mark.asyncio
     async def test_handle_casdoor_callback_new_user(
         self, mock_get_settings, mock_session_manager, mock_n8n_client_class,
         mock_rotate_password, mock_ensure_binding, mock_map_profile,
@@ -557,6 +562,7 @@ class TestHandleCasdoorCallback:
         print("✅ Casdoor callback handling (new user) works correctly")
     
     @patch('apps.auth.services.get_oauth_token')
+    @pytest.mark.asyncio
     async def test_handle_casdoor_callback_token_error(self, mock_get_token):
         """Test callback handling when token exchange fails."""
         # Mock request
@@ -576,6 +582,7 @@ class TestHandleCasdoorCallback:
     
     @patch('apps.auth.services.get_oauth_token')
     @patch('apps.auth.services.parse_jwt_token')
+    @pytest.mark.asyncio
     async def test_handle_casdoor_callback_missing_id_token(self, mock_parse_jwt, mock_get_token):
         """Test callback handling when ID token is missing."""
         # Mock request

@@ -2,6 +2,7 @@
 """
 Test script to verify cookie extraction and domain parsing improvements.
 """
+import pytest
 import asyncio
 import sys
 import os
@@ -42,6 +43,7 @@ def test_domain_parsing():
         print()
 
 
+@pytest.mark.asyncio
 async def test_n8n_login_with_cookie_extraction():
     """Test the full n8n login and cookie extraction process."""
     print("🧪 Testing n8n login and cookie extraction...")

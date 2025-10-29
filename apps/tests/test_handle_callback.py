@@ -8,6 +8,7 @@ Test the enhanced handle_casdoor_callback to verify:
 
 import asyncio
 import time
+import pytest
 import sys
 import logging
 from unittest.mock import Mock, patch, AsyncMock
@@ -40,6 +41,7 @@ class MockRequest:
 class TestHandleCasdoorCallback:
     """Test the enhanced handle_casdoor_callback function"""
     
+    @pytest.mark.asyncio
     async def test_fresh_user_login(self):
         """Test fresh user login (no existing session)"""
         print("\n=== Test: Fresh user login ===")
@@ -100,6 +102,7 @@ class TestHandleCasdoorCallback:
                 
         return True
     
+    @pytest.mark.asyncio
     async def test_user_with_old_session(self):
         """Test user with old session (should trigger fresh n8n login)"""
         print("\n=== Test: User with old session ===")
@@ -171,6 +174,7 @@ class TestHandleCasdoorCallback:
                     
         return True
     
+    @pytest.mark.asyncio
     async def test_user_with_very_recent_session(self):
         """Test user with very recent session (should skip n8n login)"""
         print("\n=== Test: User with very recent session ===")

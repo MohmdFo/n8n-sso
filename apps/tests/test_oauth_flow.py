@@ -10,6 +10,7 @@ This script tests:
 5. Comprehensive logging and monitoring
 """
 
+import pytest
 import asyncio
 import concurrent.futures
 import sys
@@ -74,6 +75,7 @@ def test_oauth_state_management():
     print("✅ IP mismatch handling works")
 
 
+@pytest.mark.asyncio
 async def test_callback_processing_locks():
     """Test callback processing with locks and deduplication."""
     print("🔒 Testing callback processing locks...")
@@ -105,6 +107,7 @@ async def test_callback_processing_locks():
     print("✅ Processed code lock prevention works")
 
 
+@pytest.mark.asyncio
 async def test_concurrent_callback_processing():
     """Test concurrent callback processing to ensure only one succeeds."""
     print("🏃‍♂️ Testing concurrent callback processing...")
@@ -185,6 +188,7 @@ def test_session_management():
     print("✅ Multiple user sessions work")
 
 
+@pytest.mark.asyncio
 async def test_cleanup_operations():
     """Test cleanup of expired data."""
     print("🧹 Testing cleanup operations...")

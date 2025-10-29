@@ -4,6 +4,7 @@ Test script to send a webhook payload similar to what Casdoor would send
 to debug the user email extraction issue.
 """
 
+import pytest
 import httpx
 import json
 
@@ -41,6 +42,10 @@ minimal_payload = {
     "organization": "organization_sharif"
 }
 
+@pytest.mark.parametrize("payload,description", [
+    (test_payload, "Complete payload with object and extendedUser"),
+    (minimal_payload, "Minimal payload without email fields")
+])
 def test_webhook(payload, description):
     """Send test webhook payload."""
     print(f"\n{'='*50}")

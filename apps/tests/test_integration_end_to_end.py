@@ -28,6 +28,7 @@ class TestCompleteAuthenticationFlow:
     @patch('apps.auth.routers.create_secure_state')
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_complete_new_user_flow(
         self, mock_process_callback, mock_validate_state, 
         mock_create_state, mock_get_login_url
@@ -145,6 +146,7 @@ class TestCompleteAuthenticationFlow:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_complete_existing_user_flow(self, mock_process_callback, mock_validate_state):
         """Test complete flow for an existing user with recent session."""
         
@@ -214,6 +216,7 @@ class TestErrorRecoveryFlows:
     """Test error recovery and fallback mechanisms."""
     
     @patch('apps.auth.routers.validate_callback_state')
+    @pytest.mark.asyncio
     async def test_oauth_error_recovery(self, mock_validate_state):
         """Test recovery from OAuth errors."""
         
@@ -254,6 +257,7 @@ class TestErrorRecoveryFlows:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_n8n_login_fallback(self, mock_process_callback, mock_validate_state):
         """Test fallback to JavaScript login when cookie extraction fails."""
         
@@ -326,6 +330,7 @@ class TestWebhookIntegration:
     """Test webhook integration scenarios."""
     
     @patch('apps.auth.routers.handle_casdoor_logout_webhook')
+    @pytest.mark.asyncio
     async def test_logout_webhook_integration(self, mock_handle_webhook):
         """Test complete logout webhook processing."""
         
@@ -378,6 +383,7 @@ class TestConcurrencyAndRaceConditions:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_concurrent_callback_processing(self, mock_process_callback, mock_validate_state):
         """Test concurrent callback processing with deduplication."""
         
@@ -426,6 +432,7 @@ class TestConcurrencyAndRaceConditions:
 class TestSecurityScenarios:
     """Test security-related scenarios and attack prevention."""
     
+    @pytest.mark.asyncio
     async def test_invalid_state_attack_prevention(self):
         """Test prevention of state parameter attacks."""
         
@@ -459,6 +466,7 @@ class TestSecurityScenarios:
         
         print("✅ Invalid state attack prevention works correctly")
     
+    @pytest.mark.asyncio
     async def test_code_reuse_prevention(self):
         """Test prevention of authorization code reuse attacks."""
         
@@ -506,6 +514,7 @@ class TestPerformanceScenarios:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_session_reuse_optimization(self, mock_process_callback, mock_validate_state):
         """Test session reuse optimization for performance."""
         

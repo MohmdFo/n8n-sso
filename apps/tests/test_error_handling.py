@@ -10,6 +10,7 @@ This script tests various error scenarios to ensure:
 
 import asyncio
 import sys
+import pytest
 import traceback
 from typing import Dict, Any
 from unittest.mock import Mock, patch, AsyncMock
@@ -72,6 +73,7 @@ def test_error_handling_utilities():
     print("✅ SafeRedirectHandler works correctly")
 
 
+@pytest.mark.asyncio
 async def test_oauth_token_error_handling():
     """Test get_oauth_token error handling."""
     print("🔐 Testing OAuth token error handling...")
@@ -109,6 +111,7 @@ def test_profile_mapping_error_handling():
     print("✅ map_casdoor_to_profile handles errors gracefully with redirects")
 
 
+@pytest.mark.asyncio
 async def test_callback_error_handling():
     """Test handle_casdoor_callback error handling."""
     print("📞 Testing callback error handling...")
@@ -124,7 +127,8 @@ async def test_callback_error_handling():
     print("✅ handle_casdoor_callback handles missing code gracefully with redirects")
 
 
-def test_safe_operation_decorator():
+@pytest.mark.asyncio
+async def test_safe_operation_decorator():
     """Test the safe_operation decorator."""
     print("🛡️ Testing safe_operation decorator...")
     
@@ -137,18 +141,14 @@ def test_safe_operation_decorator():
         raise RuntimeError("Simulated sync failure")
     
     # Test async function
-    async def test_async():
-        result = await failing_async_function()
-        assert isinstance(result, RedirectResponse)
-        return True
+    result_async = await failing_async_function()
+    assert isinstance(result_async, RedirectResponse)
     
     # Test sync function
     result = failing_sync_function()
     assert isinstance(result, RedirectResponse)
     
     print("✅ safe_operation decorator works for both sync and async functions")
-    
-    return test_async()
 
 
 def test_settings_access():

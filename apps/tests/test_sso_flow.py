@@ -4,12 +4,14 @@ Test script to validate the n8n SSO flow end-to-end.
 This script simulates a Casdoor authentication and tests the n8n cookie extraction.
 """
 
+import pytest
 import asyncio
 import httpx
 from apps.integrations.n8n_client import N8NClient
 from apps.auth.services import extract_n8n_auth_cookie
 from conf.settings import get_settings
 
+@pytest.mark.asyncio
 async def test_n8n_cookie_extraction():
     """Test n8n authentication and cookie extraction."""
     settings = get_settings()

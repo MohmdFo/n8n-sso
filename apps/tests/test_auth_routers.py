@@ -40,8 +40,10 @@ class MockRequest:
 class TestCasdoorLogin:
     """Test Casdoor login endpoint."""
     
+    @pytest.mark.asyncio
     @patch('apps.auth.routers.get_casdoor_login_url')
     @patch('apps.auth.routers.create_secure_state')
+    @pytest.mark.asyncio
     async def test_casdoor_login_success(self, mock_create_state, mock_get_login_url):
         """Test successful login initiation."""
         # Mock state creation
@@ -71,6 +73,7 @@ class TestCasdoorLogin:
     
     @patch('apps.auth.routers.get_casdoor_login_url')
     @patch('apps.auth.routers.create_secure_state')
+    @pytest.mark.asyncio
     async def test_casdoor_login_url_generation_error(self, mock_create_state, mock_get_login_url):
         """Test login with URL generation error."""
         # Mock state creation
@@ -91,6 +94,7 @@ class TestCasdoorLogin:
         print("✅ Casdoor login (URL generation error) works correctly")
     
     @patch('apps.auth.routers.create_secure_state')
+    @pytest.mark.asyncio
     async def test_casdoor_login_state_creation_error(self, mock_create_state):
         """Test login with state creation error."""
         # Mock state creation failure
@@ -113,6 +117,7 @@ class TestCasdoorCallback:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_casdoor_callback_success(self, mock_process_callback, mock_validate_state):
         """Test successful OAuth callback processing."""
         # Mock state validation
@@ -144,6 +149,7 @@ class TestCasdoorCallback:
         
         print("✅ Casdoor callback (success) works correctly")
     
+    @pytest.mark.asyncio
     async def test_casdoor_callback_missing_code(self):
         """Test callback with missing authorization code."""
         # Create mock request without code
@@ -159,6 +165,7 @@ class TestCasdoorCallback:
         
         print("✅ Casdoor callback (missing code) works correctly")
     
+    @pytest.mark.asyncio
     async def test_casdoor_callback_missing_state(self):
         """Test callback with missing state parameter."""
         # Create mock request without state
@@ -175,6 +182,7 @@ class TestCasdoorCallback:
         print("✅ Casdoor callback (missing state) works correctly")
     
     @patch('apps.auth.routers.validate_callback_state')
+    @pytest.mark.asyncio
     async def test_casdoor_callback_invalid_state(self, mock_validate_state):
         """Test callback with invalid state."""
         # Mock state validation failure
@@ -195,6 +203,7 @@ class TestCasdoorCallback:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_casdoor_callback_already_processed(self, mock_process_callback, mock_validate_state):
         """Test callback when code already processed."""
         # Mock state validation
@@ -221,6 +230,7 @@ class TestCasdoorCallback:
     
     @patch('apps.auth.routers.validate_callback_state')
     @patch('apps.auth.routers.process_oauth_callback_safely')
+    @pytest.mark.asyncio
     async def test_casdoor_callback_processing_error(self, mock_process_callback, mock_validate_state):
         """Test callback with processing error."""
         # Mock state validation
@@ -250,6 +260,7 @@ class TestCasdoorWebhook:
     """Test Casdoor webhook endpoint."""
     
     @patch('apps.auth.routers.handle_casdoor_logout_webhook')
+    @pytest.mark.asyncio
     async def test_casdoor_webhook_success(self, mock_handle_webhook):
         """Test successful webhook processing."""
         # Mock webhook handler
@@ -282,6 +293,7 @@ class TestCasdoorWebhook:
         
         print("✅ Casdoor webhook (success) works correctly")
     
+    @pytest.mark.asyncio
     async def test_casdoor_webhook_invalid_json(self):
         """Test webhook with invalid JSON."""
         # Create mock request with invalid JSON
@@ -297,6 +309,7 @@ class TestCasdoorWebhook:
         print("✅ Casdoor webhook (invalid JSON) works correctly")
     
     @patch('apps.auth.routers.handle_casdoor_logout_webhook')
+    @pytest.mark.asyncio
     async def test_casdoor_webhook_processing_error(self, mock_handle_webhook):
         """Test webhook with processing error."""
         # Mock webhook handler failure
@@ -321,6 +334,7 @@ class TestCasdoorLogout:
     
     @patch('apps.integrations.n8n_client.N8NClient')
     @patch('conf.settings.get_settings')
+    @pytest.mark.asyncio
     async def test_casdoor_logout_success(self, mock_get_settings, mock_n8n_client_class):
         """Test successful manual logout."""
         # Mock settings
@@ -360,6 +374,7 @@ class TestCasdoorLogout:
     
     @patch('apps.integrations.n8n_client.N8NClient')
     @patch('conf.settings.get_settings')
+    @pytest.mark.asyncio
     async def test_casdoor_logout_without_cookie(self, mock_get_settings, mock_n8n_client_class):
         """Test logout without auth cookie."""
         # Mock settings
@@ -393,6 +408,7 @@ class TestCasdoorLogout:
     
     @patch('apps.integrations.n8n_client.N8NClient')
     @patch('conf.settings.get_settings')
+    @pytest.mark.asyncio
     async def test_casdoor_logout_n8n_error(self, mock_get_settings, mock_n8n_client_class):
         """Test logout with N8N error."""
         # Mock settings
@@ -425,6 +441,7 @@ class TestCasdoorLogout:
         print("✅ Casdoor logout (N8N error) works correctly")
     
     @patch('conf.settings.get_settings')
+    @pytest.mark.asyncio
     async def test_casdoor_logout_general_error(self, mock_get_settings):
         """Test logout with general error."""
         # Mock settings failure
@@ -445,6 +462,7 @@ class TestCasdoorLogout:
 class TestRouterEdgeCases:
     """Test edge cases and boundary conditions."""
     
+    @pytest.mark.asyncio
     async def test_callback_with_empty_query_params(self):
         """Test callback with empty query parameters."""
         request = MockRequest(query_params={})
@@ -454,6 +472,7 @@ class TestRouterEdgeCases:
         assert isinstance(result, RedirectResponse)
         print("✅ Callback (empty query params) works correctly")
     
+    @pytest.mark.asyncio
     async def test_login_with_special_characters_in_headers(self):
         """Test login with special characters in headers."""
         request = MockRequest(
@@ -475,6 +494,7 @@ class TestRouterEdgeCases:
         
         print("✅ Login (special characters in headers) works correctly")
     
+    @pytest.mark.asyncio
     async def test_webhook_with_large_payload(self):
         """Test webhook with large payload."""
         # Create large payload
@@ -498,6 +518,7 @@ class TestRouterEdgeCases:
         
         print("✅ Webhook (large payload) works correctly")
     
+    @pytest.mark.asyncio
     async def test_logout_with_very_long_cookie(self):
         """Test logout with very long auth cookie."""
         long_cookie = "x" * 5000  # Very long cookie

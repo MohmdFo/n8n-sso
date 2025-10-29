@@ -3,9 +3,11 @@
 Quick test script to verify the SSO redirect fix.
 """
 
+import pytest
 import httpx
 import asyncio
 
+@pytest.mark.asyncio
 async def test_redirect_fix():
     """Test that the SSO gateway properly redirects to workflows."""
     gateway_url = "http://107.189.19.66:8512"
