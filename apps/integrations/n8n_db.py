@@ -120,10 +120,10 @@ async def ensure_user_project_binding(
             await conn.execute(
                 text('''
                     INSERT INTO "user" (
-                        id, email, "firstName", "lastName", password, role, 
+                        id, email, "firstName", "lastName", password, "roleSlug", 
                         settings, "personalizationAnswers", "createdAt", "updatedAt"
                     ) VALUES (
-                        :id, :email, :firstName, :lastName, :password, :role,
+                        :id, :email, :firstName, :lastName, :password, :roleSlug,
                         :settings, :personalizationAnswers, :createdAt, :updatedAt
                     )
                 '''),
@@ -133,7 +133,7 @@ async def ensure_user_project_binding(
                     "firstName": first_name,
                     "lastName": last_name,
                     "password": hashed_password,
-                    "role": global_role,
+                    "roleSlug": global_role,
                     "settings": '{"userActivated": false}',
                     "personalizationAnswers": '{"version": "v4"}',
                     "createdAt": now,
