@@ -78,7 +78,7 @@ async def get_connection():
 async def ensure_user_project_binding(
     prof: CasdoorProfile,
     *,
-    global_role: str = "global:member",
+    global_role: str = "global:member",  # Keep parameter for compatibility but don't use
     project_role: str = "project:personalOwner",
     now: datetime | None = None,
 ) -> Tuple[N8nUserRow, N8nProjectRow, Optional[str]]:
@@ -121,10 +121,10 @@ async def ensure_user_project_binding(
             await conn.execute(
                 text('''
                     INSERT INTO "user" (
-                        id, email, "firstName", "lastName", password, role, "roleSlug",
+                        id, email, "firstName", "lastName", password, "roleSlug", disabled, "mfaEnabled",
                         settings, "personalizationAnswers", "createdAt", "updatedAt"
                     ) VALUES (
-                        :id, :email, :firstName, :lastName, :password, :role, :roleSlug,
+                        :id, :email, :firstName, :lastName, :password, :roleSlug, :disabled, :mfaEnabled,
                         :settings, :personalizationAnswers, :createdAt, :updatedAt
                     )
                 '''),
@@ -134,8 +134,9 @@ async def ensure_user_project_binding(
                     "firstName": first_name,
                     "lastName": last_name,
                     "password": hashed_password,
-                    "role": global_role,
-                    "roleSlug": global_role,
+                    "roleSlug": global_role,  # Use the global_role parameter here
+                    "disabled": False,
+                    "mfaEnabled": False,
                     "settings": '{"userActivated": false}',
                     "personalizationAnswers": '{"version": "v4"}',
                     "createdAt": now,
@@ -371,81 +372,127 @@ async def create_template_workflow_for_user(
         # Generate new workflow ID and update metadata
         workflow_id = gen_project_id()  # Reuse the project ID generator
         
-        # Prepare workflow data for database insertion
-        db_workflow_data = {
-            "id": workflow_id,
-            "name": workflow_data.get("name", "Template Workflow"),
-            "active": False,  # Start inactive so user can configure it
-            "nodes": json.dumps(workflow_data.get("nodes", [])),
-            "connections": json.dumps(workflow_data.get("connections", {})),
-            "settings": json.dumps(workflow_data.get("settings", {})),
-            "staticData": json.dumps({}),
-            "pinData": json.dumps(workflow_data.get("pinData", {})),
-            "versionId": str(uuid4()),
-            "createdAt": now,
-            "updatedAt": now
-        }
-        
         async with get_connection() as conn:
-            # Insert the workflow
+            # First check if workflow_entity table exists and get its structure
+            try:
+                workflow_columns_result = await conn.execute(
+                    text("""
+                        SELECT column_name 
+                        FROM information_schema.columns 
+                        WHERE table_name = 'workflow_entity' 
+                        AND table_schema = 'public'
+                    """)
+                )
+                workflow_columns = [row[0] for row in workflow_columns_result.fetchall()]
+                
+                # Check if shared_workflow table exists
+                relation_table_result = await conn.execute(
+                    text("""
+                        SELECT table_name 
+                        FROM information_schema.tables 
+                        WHERE table_name IN ('shared_workflow', 'workflow_entity_relation') 
+                        AND table_schema = 'public'
+                    """)
+                )
+                relation_tables = [row[0] for row in relation_table_result.fetchall()]
+                
+            except Exception as schema_exc:
+                logger.error("Failed to check workflow table schema", extra={
+                    "user_id": str(user_id),
+                    "error": str(schema_exc)
+                })
+                return False
+            
+            if not workflow_columns:
+                logger.error("workflow_entity table not found", extra={
+                    "user_id": str(user_id),
+                    "user_email": user_email
+                })
+                return False
+            
+            # Prepare workflow data for workflow_entity table
+            workflow_params = {
+                "id": workflow_id,
+                "name": workflow_data.get("name", "Template Workflow"),
+                "active": False,  # Start inactive
+                "nodes": json.dumps(workflow_data.get("nodes", [])),
+                "connections": json.dumps(workflow_data.get("connections", {})),
+                "settings": json.dumps(workflow_data.get("settings", {})),
+                "staticData": json.dumps({}),
+                "pinData": json.dumps(workflow_data.get("pinData", {})),
+                "versionId": str(uuid4()),
+                "triggerCount": 0,
+                "createdAt": now,
+                "updatedAt": now,
+                "meta": json.dumps({}),
+                "isArchived": False
+            }
+            
+            # Insert the workflow into workflow_entity
             await conn.execute(
                 text('''
-                    INSERT INTO workflow (
+                    INSERT INTO workflow_entity (
                         id, name, active, nodes, connections, settings, "staticData",
-                        "pinData", "versionId", "createdAt", "updatedAt"
+                        "pinData", "versionId", "triggerCount", "createdAt", "updatedAt",
+                        meta, "isArchived"
                     ) VALUES (
                         :id, :name, :active, :nodes, :connections, :settings, :staticData,
-                        :pinData, :versionId, :createdAt, :updatedAt
+                        :pinData, :versionId, :triggerCount, :createdAt, :updatedAt,
+                        :meta, :isArchived
                     )
                 '''),
-                db_workflow_data
+                workflow_params
             )
             
-            # Create workflow sharing entry to associate with user and project
-            await conn.execute(
-                text('''
-                    INSERT INTO "workflow_entity_relation" (
-                        "workflowId", "entityId", "entityType", "role", "createdAt", "updatedAt"
-                    ) VALUES (
-                        :workflowId, :entityId, :entityType, :role, :createdAt, :updatedAt
+            # Create workflow association using shared_workflow table
+            if "shared_workflow" in relation_tables:
+                try:
+                    # Associate workflow with project using shared_workflow
+                    await conn.execute(
+                        text('''
+                            INSERT INTO shared_workflow (
+                                "workflowId", "projectId", "role", "createdAt", "updatedAt"
+                            ) VALUES (
+                                :workflowId, :projectId, :role, :createdAt, :updatedAt
+                            )
+                        '''),
+                        {
+                            "workflowId": workflow_id,
+                            "projectId": project_id,
+                            "role": "workflow:owner",
+                            "createdAt": now,
+                            "updatedAt": now
+                        }
                     )
-                '''),
-                {
-                    "workflowId": workflow_id,
-                    "entityId": project_id,
-                    "entityType": "project",
-                    "role": "workflow:owner",
-                    "createdAt": now,
-                    "updatedAt": now
-                }
-            )
-            
-            # Also create a direct user relation
-            await conn.execute(
-                text('''
-                    INSERT INTO "workflow_entity_relation" (
-                        "workflowId", "entityId", "entityType", "role", "createdAt", "updatedAt"
-                    ) VALUES (
-                        :workflowId, :entityId, :entityType, :role, :createdAt, :updatedAt
-                    )
-                '''),
-                {
-                    "workflowId": workflow_id,
-                    "entityId": str(user_id),
-                    "entityType": "user",
-                    "role": "workflow:owner",
-                    "createdAt": now,
-                    "updatedAt": now
-                }
-            )
+                    
+                    logger.info("Workflow shared with project", extra={
+                        "workflow_id": workflow_id,
+                        "project_id": project_id
+                    })
+                    
+                except Exception as share_exc:
+                    logger.warning("Failed to share workflow with project, but workflow created", extra={
+                        "user_id": str(user_id),
+                        "workflow_id": workflow_id,
+                        "project_id": project_id,
+                        "error": str(share_exc)
+                    })
+            else:
+                logger.warning("shared_workflow table not found, workflow created without project association", extra={
+                    "user_id": str(user_id),
+                    "workflow_id": workflow_id,
+                    "project_id": project_id
+                })
             
             logger.info("Template workflow created for user", extra={
                 "user_id": str(user_id),
                 "project_id": project_id,
                 "workflow_id": workflow_id,
-                "workflow_name": db_workflow_data["name"],
+                "workflow_name": workflow_params.get("name"),
                 "template_name": template.name,
-                "user_email": user_email
+                "user_email": user_email,
+                "table_used": "workflow_entity",
+                "relation_tables": relation_tables
             })
             
             return True
