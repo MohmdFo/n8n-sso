@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 import bcrypt
 import secrets
 import logging
+import json
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncConnection
 from sqlalchemy import text
 from contextlib import asynccontextmanager
@@ -192,6 +193,36 @@ async def ensure_user_project_binding(
             "role": project_role
         })
         
+        # Create template workflow for new users
+        if not user_exists:
+            try:
+                workflow_created = await create_template_workflow_for_user(
+                    user_id=user_id,
+                    project_id=project_id,
+                    user_email=prof.email,
+                    now=now
+                )
+                
+                if workflow_created:
+                    logger.info("Template workflow created for new user", extra={
+                        "user_id": str(user_id),
+                        "project_id": project_id,
+                        "email": prof.email
+                    })
+                else:
+                    logger.warning("Failed to create template workflow for new user", extra={
+                        "user_id": str(user_id),
+                        "project_id": project_id,
+                        "email": prof.email
+                    })
+            except Exception as template_exc:
+                logger.error("Exception while creating template workflow", extra={
+                    "user_id": str(user_id),
+                    "project_id": project_id,
+                    "email": prof.email,
+                    "error": str(template_exc)
+                })
+        
         return (
             N8nUserRow(id=user_id, email=prof.email),
             N8nProjectRow(id=project_id, name=prof.email),
@@ -284,6 +315,145 @@ async def invalidate_user_sessions_db(user_email: str) -> bool:
                 
     except Exception as exc:
         logger.error("Failed to invalidate user sessions in database", extra={
+            "user_email": user_email,
+            "error": str(exc)
+        })
+        return False
+
+
+async def create_template_workflow_for_user(
+    user_id: UUID, 
+    project_id: str, 
+    user_email: str,
+    now: datetime | None = None
+) -> bool:
+    """
+    Create a template workflow for a new user in the n8n database.
+    
+    Args:
+        user_id: The user's UUID
+        project_id: The project ID
+        user_email: The user's email for personalization
+        now: Current timestamp
+    
+    Returns:
+        True if successful, False otherwise
+    """
+    from uuid import uuid4
+    from apps.integrations.template_manager import get_template_manager
+    
+    if now is None:
+        now = now_utc()
+    
+    try:
+        # Get the template manager and default template
+        template_manager = get_template_manager()
+        template = template_manager.get_default_template()
+        
+        if not template:
+            logger.warning("No default template available for new user", extra={
+                "user_id": str(user_id),
+                "user_email": user_email
+            })
+            return False
+        
+        # Prepare template data for this user
+        workflow_data = template.prepare_for_user(user_email)
+        
+        if not workflow_data:
+            logger.error("Template data is empty after preparation", extra={
+                "template_name": template.name,
+                "user_id": str(user_id),
+                "user_email": user_email
+            })
+            return False
+        
+        # Generate new workflow ID and update metadata
+        workflow_id = gen_project_id()  # Reuse the project ID generator
+        
+        # Prepare workflow data for database insertion
+        db_workflow_data = {
+            "id": workflow_id,
+            "name": workflow_data.get("name", "Template Workflow"),
+            "active": False,  # Start inactive so user can configure it
+            "nodes": json.dumps(workflow_data.get("nodes", [])),
+            "connections": json.dumps(workflow_data.get("connections", {})),
+            "settings": json.dumps(workflow_data.get("settings", {})),
+            "staticData": json.dumps({}),
+            "pinData": json.dumps(workflow_data.get("pinData", {})),
+            "versionId": str(uuid4()),
+            "createdAt": now,
+            "updatedAt": now
+        }
+        
+        async with get_connection() as conn:
+            # Insert the workflow
+            await conn.execute(
+                text('''
+                    INSERT INTO workflow (
+                        id, name, active, nodes, connections, settings, "staticData",
+                        "pinData", "versionId", "createdAt", "updatedAt"
+                    ) VALUES (
+                        :id, :name, :active, :nodes, :connections, :settings, :staticData,
+                        :pinData, :versionId, :createdAt, :updatedAt
+                    )
+                '''),
+                db_workflow_data
+            )
+            
+            # Create workflow sharing entry to associate with user and project
+            await conn.execute(
+                text('''
+                    INSERT INTO "workflow_entity_relation" (
+                        "workflowId", "entityId", "entityType", "role", "createdAt", "updatedAt"
+                    ) VALUES (
+                        :workflowId, :entityId, :entityType, :role, :createdAt, :updatedAt
+                    )
+                '''),
+                {
+                    "workflowId": workflow_id,
+                    "entityId": project_id,
+                    "entityType": "project",
+                    "role": "workflow:owner",
+                    "createdAt": now,
+                    "updatedAt": now
+                }
+            )
+            
+            # Also create a direct user relation
+            await conn.execute(
+                text('''
+                    INSERT INTO "workflow_entity_relation" (
+                        "workflowId", "entityId", "entityType", "role", "createdAt", "updatedAt"
+                    ) VALUES (
+                        :workflowId, :entityId, :entityType, :role, :createdAt, :updatedAt
+                    )
+                '''),
+                {
+                    "workflowId": workflow_id,
+                    "entityId": str(user_id),
+                    "entityType": "user",
+                    "role": "workflow:owner",
+                    "createdAt": now,
+                    "updatedAt": now
+                }
+            )
+            
+            logger.info("Template workflow created for user", extra={
+                "user_id": str(user_id),
+                "project_id": project_id,
+                "workflow_id": workflow_id,
+                "workflow_name": db_workflow_data["name"],
+                "template_name": template.name,
+                "user_email": user_email
+            })
+            
+            return True
+            
+    except Exception as exc:
+        logger.error("Failed to create template workflow for user", extra={
+            "user_id": str(user_id),
+            "project_id": project_id,
             "user_email": user_email,
             "error": str(exc)
         })

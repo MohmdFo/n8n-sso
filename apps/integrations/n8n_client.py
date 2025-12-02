@@ -177,6 +177,74 @@ class N8NClient:
             })
             raise N8NClientError(500, f"Logout by email failed: {exc}")
 
+    def import_workflow(self, workflow_data: dict, auth_cookie: str = None) -> httpx.Response:
+        """Import a workflow to n8n."""
+        headers = self._headers()
+        
+        # Add authentication cookie if provided
+        if auth_cookie:
+            headers["Cookie"] = f"n8n-auth={auth_cookie}"
+        
+        try:
+            resp = self._client.request(
+                "POST",
+                "/rest/workflows",
+                json=workflow_data,
+                headers=headers
+            )
+            
+            if resp.status_code >= 400:
+                logger.error("n8n workflow import failed", extra={
+                    "status": resp.status_code,
+                    "response_text": resp.text[:500],
+                    "workflow_name": workflow_data.get("name", "unknown")
+                })
+                raise N8NClientError(resp.status_code, "Workflow import failed", resp.text)
+            
+            logger.info("n8n workflow import successful", extra={
+                "status": resp.status_code,
+                "workflow_name": workflow_data.get("name", "unknown"),
+                "workflow_id": resp.json().get("id") if resp.status_code < 400 else None
+            })
+            return resp
+            
+        except Exception as exc:
+            logger.error("n8n workflow import failed", extra={
+                "error": str(exc),
+                "workflow_name": workflow_data.get("name", "unknown")
+            })
+            raise N8NClientError(500, f"Workflow import request failed: {exc}")
+
+    def get_workflows(self, auth_cookie: str = None) -> httpx.Response:
+        """Get list of workflows from n8n."""
+        headers = self._headers()
+        
+        # Add authentication cookie if provided
+        if auth_cookie:
+            headers["Cookie"] = f"n8n-auth={auth_cookie}"
+        
+        try:
+            resp = self._client.request(
+                "GET",
+                "/rest/workflows",
+                headers=headers
+            )
+            
+            if resp.status_code >= 400:
+                logger.error("n8n get workflows failed", extra={
+                    "status": resp.status_code,
+                    "response_text": resp.text[:500]
+                })
+                raise N8NClientError(resp.status_code, "Get workflows failed", resp.text)
+            
+            return resp
+            
+        except Exception as exc:
+            logger.error("n8n get workflows failed", extra={
+                "error": str(exc)
+            })
+            raise N8NClientError(500, f"Get workflows request failed: {exc}")
+
     def close(self):
         try:
             self._client.close()
