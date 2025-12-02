@@ -429,20 +429,38 @@ async def create_template_workflow_for_user(
             }
             
             # Insert the workflow into workflow_entity
-            await conn.execute(
-                text('''
-                    INSERT INTO workflow_entity (
-                        id, name, active, nodes, connections, settings, "staticData",
-                        "pinData", "versionId", "triggerCount", "createdAt", "updatedAt",
-                        meta, "isArchived"
-                    ) VALUES (
-                        :id, :name, :active, :nodes, :connections, :settings, :staticData,
-                        :pinData, :versionId, :triggerCount, :createdAt, :updatedAt,
-                        :meta, :isArchived
-                    )
-                '''),
-                workflow_params
-            )
+            try:
+                await conn.execute(
+                    text('''
+                        INSERT INTO workflow_entity (
+                            id, name, active, nodes, connections, settings, "staticData",
+                            "pinData", "versionId", "triggerCount", "createdAt", "updatedAt",
+                            meta, "isArchived"
+                        ) VALUES (
+                            :id, :name, :active, :nodes, :connections, :settings, :staticData,
+                            :pinData, :versionId, :triggerCount, :createdAt, :updatedAt,
+                            :meta, :isArchived
+                        )
+                    '''),
+                    workflow_params
+                )
+                
+                logger.info("Workflow successfully inserted into workflow_entity", extra={
+                    "workflow_id": workflow_id,
+                    "workflow_name": workflow_params.get("name"),
+                    "user_email": user_email
+                })
+                
+            except Exception as workflow_insert_exc:
+                logger.error("Failed to insert workflow into workflow_entity", extra={
+                    "workflow_id": workflow_id,
+                    "user_email": user_email,
+                    "error": str(workflow_insert_exc),
+                    "error_type": type(workflow_insert_exc).__name__,
+                    "workflow_params_keys": list(workflow_params.keys())
+                })
+                # This is a critical failure - return False
+                return False
             
             # Create workflow association using shared_workflow table
             if "shared_workflow" in relation_tables:
@@ -465,18 +483,64 @@ async def create_template_workflow_for_user(
                         }
                     )
                     
-                    logger.info("Workflow shared with project", extra={
+                    logger.info("Workflow shared with project successfully", extra={
                         "workflow_id": workflow_id,
-                        "project_id": project_id
+                        "project_id": project_id,
+                        "user_email": user_email
                     })
                     
                 except Exception as share_exc:
-                    logger.warning("Failed to share workflow with project, but workflow created", extra={
+                    logger.error("Failed to share workflow with project - detailed error", extra={
                         "user_id": str(user_id),
                         "workflow_id": workflow_id,
                         "project_id": project_id,
-                        "error": str(share_exc)
+                        "user_email": user_email,
+                        "error": str(share_exc),
+                        "error_type": type(share_exc).__name__,
+                        "workflow_created": True
                     })
+                    
+                    # Try alternative: Check if it already exists
+                    try:
+                        existing = await conn.fetch(
+                            text('SELECT * FROM shared_workflow WHERE "workflowId" = :workflowId'),
+                            {"workflowId": workflow_id}
+                        )
+                        
+                        if existing:
+                            logger.warning("Workflow sharing already exists", extra={
+                                "workflow_id": workflow_id,
+                                "existing_sharing": [dict(row) for row in existing]
+                            })
+                        else:
+                            # Try with simplified insert (let database handle timestamps)
+                            await conn.execute(
+                                text('''
+                                    INSERT INTO shared_workflow ("workflowId", "projectId", "role") 
+                                    VALUES (:workflowId, :projectId, :role)
+                                '''),
+                                {
+                                    "workflowId": workflow_id,
+                                    "projectId": project_id,
+                                    "role": "workflow:owner"
+                                }
+                            )
+                            
+                            logger.info("Workflow shared with project (retry successful)", extra={
+                                "workflow_id": workflow_id,
+                                "project_id": project_id,
+                                "user_email": user_email,
+                                "method": "simplified_insert"
+                            })
+                            
+                    except Exception as retry_exc:
+                        logger.error("Failed to share workflow with project even on retry", extra={
+                            "workflow_id": workflow_id,
+                            "project_id": project_id,
+                            "user_email": user_email,
+                            "retry_error": str(retry_exc),
+                            "retry_error_type": type(retry_exc).__name__
+                        })
             else:
                 logger.warning("shared_workflow table not found, workflow created without project association", extra={
                     "user_id": str(user_id),
