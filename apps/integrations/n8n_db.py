@@ -466,15 +466,16 @@ async def create_template_workflow_for_user(
             if "shared_workflow" in relation_tables:
                 try:
                     # Check if workflow is already shared first
-                    existing = await conn.fetch(
+                    existing_result = await conn.execute(
                         text('SELECT * FROM shared_workflow WHERE "workflowId" = :workflowId'),
                         {"workflowId": workflow_id}
                     )
+                    existing_rows = existing_result.fetchall()
                     
-                    if existing:
+                    if existing_rows:
                         logger.warning("Workflow sharing already exists", extra={
                             "workflow_id": workflow_id,
-                            "existing_sharing": [dict(row) for row in existing]
+                            "existing_sharing_count": len(existing_rows)
                         })
                     else:
                         # Use simplified insert (let database handle timestamps)
